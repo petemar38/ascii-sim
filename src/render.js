@@ -299,7 +299,7 @@ function render(frame, world, cam, opts = {}) {
           }
           if (storefront && fl <= 1) {
             const u = uu;
-            if (fl === 0 && signOn && vf > 0.78 && Math.abs(vf - 0.88) <= rowVf * 0.5 && u >= signX0 && u < signX0 + signLen * 0.1) {
+            if (fl === 0 && signOn && vf > 0.7 && Math.abs(vf - 0.8) <= rowVf * 0.5 && u >= signX0 && u < signX0 + signLen * 0.1) {
               const s = (u - signX0) / 0.1, ci = Math.floor(s);
               if (Math.abs(s - ci - 0.5) <= 0.55 / cpc) { sp = shop.sign.charCodeAt(ci); tn = TONE.SIGN; }
             }

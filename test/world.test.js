@@ -65,3 +65,27 @@ test('wrap can be turned off for a walled map', () => {
   assert.strictEqual(C.heightAt(walled, -1, 5) > 0, true);
   assert.strictEqual(C.worldHash(walled), C.worldHash(w)); // same city, only the edge behaviour differs
 });
+test('buildings come in all sizes: narrow and wide, short and tall, in every kind of district', () => {
+  const n = w.size, seen = new Set(), dims = [];
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const i = y * n + x, id = w.bid[i];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (x === 0 || y === 0) continue; // skip lots that wrap round the seam
+    let wd = 0, dp = 0;
+    while (w.bid[y * n + (x + wd) % n] === id) wd++;
+    while (w.bid[((y + dp) % n) * n + x] === id) dp++;
+    dims.push({ wd, dp, h: w.height[i], d: w.district[i] });
+  }
+  const has = (f) => dims.filter(f).length;
+  assert.ok(has((b) => b.wd <= 2) >= 30, 'few narrow buildings');
+  assert.ok(has((b) => b.wd >= 7) >= 15, 'few wide buildings');
+  assert.ok(has((b) => b.dp >= 7) >= 10, 'few deep buildings');
+  assert.ok(has((b) => b.h === 1) >= 30, 'few single-storey buildings');
+  assert.ok(has((b) => b.h >= 12) >= 20, 'few high-rises');
+  const types = new Set(w.district);
+  // a tower somewhere outside downtown, and a low building right in the middle of downtown
+  assert.ok(has((b) => b.d !== 0 && b.h >= 12) >= 3, 'no towers outside downtown');
+  assert.ok(has((b) => b.d === 0 && b.h <= 4) >= 3, 'no low buildings downtown');
+  assert.ok(types.size > 1);
+});

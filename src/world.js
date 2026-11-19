@@ -152,22 +152,41 @@ function generateWorld(opts = {}) {
   let nextBid = 1;
   const buildings = []; // every lot placed: {id, x0, y0, x1, y1, h, type}
 
-  function pickHeight(type, x, y) {
+  function pickHeight(type, x, y, area) {
     const core = Math.hypot(wd(x - districts[0].cx), wd(y - districts[0].cy));
     const falloff = Math.exp(-Math.pow(core / 16, 2)); // towers cluster in the core
+    const r = rng(), spread = (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1));
+    const big = Math.min(1, area / 40); // bigger footprints make taller buildings more likely
     switch (type) {
-      case D.DOWNTOWN: return clamp(Math.round(4 + 6 * falloff + Math.pow(rng(), 1.3) * 30 * falloff), 4, 40);
-      case D.COMMERCIAL: return 3 + Math.floor(rng() * 6) + (rng() < 0.08 ? 6 : 0);
-      case D.RESIDENTIAL: return 2 + Math.floor(rng() * 3);
-      case D.INDUSTRIAL: return 1 + Math.floor(rng() * 3);
-      default: return 1 + Math.floor(rng() * 2);
+      case D.DOWNTOWN:
+        if (r < 0.1) return spread(2, 4); // an old low building squeezed between towers
+        return clamp(Math.round(4 + 6 * falloff + Math.pow(rng(), 1.3) * 30 * falloff), 4, 40);
+      case D.COMMERCIAL:
+        if (r < 0.14) return 1;
+        if (r < 0.62) return spread(2, 5);
+        if (r < 0.9) return spread(5, 9);
+        return spread(10, 16 + Math.round(big * 6));
+      case D.RESIDENTIAL:
+        if (r < 0.1) return 1;
+        if (r < 0.62) return spread(2, 4); // brownstones and rowhouses
+        if (r < 0.86) return spread(4, 7);
+        if (r < 0.96) return spread(8, 12);
+        return spread(14, 20 + Math.round(big * 6)); // the odd apartment tower
+      case D.INDUSTRIAL:
+        if (r < 0.7) return spread(1, 2);
+        if (r < 0.93) return spread(3, 4);
+        return spread(5, 8);
+      default: return r < 0.8 ? 1 : spread(2, 3);
     }
   }
 
   function placeBuilding(x0, y0, x1, y1, type) {
     if (x1 - x0 < 2 || y1 - y0 < 2) return;
     const id = nextBid++ % 65535 + 1;
-    const h = pickHeight(type, (x0 + x1) / 2, (y0 + y1) / 2);
+    let h = pickHeight(type, (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) * (y1 - y0));
+    // keep the wrap-around seam quiet: nothing tall within 12 tiles of it, so it is hard to spot
+    const sx = Math.min(mod(x0), size - mod(x1 - 1)), sy = Math.min(mod(y0), size - mod(y1 - 1));
+    if (Math.min(sx, sy) < 12) h = Math.min(h, 6);
     buildings.push({ id, x0, y0, x1, y1, h, type });
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
@@ -184,25 +203,27 @@ function generateWorld(opts = {}) {
     }
   }
 
-  function subdivide(x0, y0, x1, y1, type) {
+  function subdivide(x0, y0, x1, y1, type, grain) {
     const w = x1 - x0, h = y1 - y0;
-    const minLot = 3;
-    const maxArea = type === D.INDUSTRIAL ? 60 : type === D.DOWNTOWN ? 28 : 24;
-    if ((w * h <= maxArea && rng() < 0.85) || (w < minLot * 2 && h < minLot * 2)) {
+    const minLot = type !== D.INDUSTRIAL && grain < 0.45 ? 2 : 3; // fine-grained blocks get narrow rowhouse lots
+    const base = type === D.INDUSTRIAL ? 60 : type === D.DOWNTOWN ? 28 : 24;
+    const maxArea = Math.round(base * (grain < 0.2 ? 0.3 : grain < 0.45 ? 0.5 : grain < 0.75 ? 1 : grain < 0.92 ? 2.4 : 5)); // 5 = one big slab per block
+    if ((w * h <= maxArea && rng() < 0.9) || (w < minLot * 2 && h < minLot * 2)) {
       const alleyChance = type === D.DOWNTOWN ? 0.25 : type === D.RESIDENTIAL ? 0.7 : 0.45;
       const insetX = w > 4 && rng() < alleyChance ? 1 : 0;
       const insetY = h > 4 && rng() < alleyChance ? 1 : 0;
       placeBuilding(x0 + insetX, y0 + insetY, x1, y1, type);
       return;
     }
+    // split along the long side; the cut lands anywhere that leaves both halves at least minLot wide
     if (w >= h && w >= minLot * 2) {
       const s = x0 + minLot + Math.floor(rng() * (w - 2 * minLot + 1));
-      subdivide(x0, y0, s, y1, type);
-      subdivide(s, y0, x1, y1, type);
+      subdivide(x0, y0, s, y1, type, grain);
+      subdivide(s, y0, x1, y1, type, grain);
     } else if (h >= minLot * 2) {
       const s = y0 + minLot + Math.floor(rng() * (h - 2 * minLot + 1));
-      subdivide(x0, y0, x1, s, type);
-      subdivide(x0, s, x1, y1, type);
+      subdivide(x0, y0, x1, s, type, grain);
+      subdivide(x0, s, x1, y1, type, grain);
     } else {
       placeBuilding(x0, y0, x1, y1, type);
     }
@@ -225,7 +246,7 @@ function generateWorld(opts = {}) {
         const k = use === 'park' ? K.PARK : K.PLAZA;
         for (let y = iy0; y < iy1; y++) for (let x = ix0; x < ix1; x++) kind[idx(x, y)] = k;
       } else {
-        subdivide(ix0, iy0, ix1, iy1, type);
+        subdivide(ix0, iy0, ix1, iy1, type, rng());
       }
     }
   }
@@ -274,7 +295,7 @@ function generateWorld(opts = {}) {
     [D.INDUSTRIAL]: { p: 0.15, w: [[S.HARDWARE, 0.6], [S.FIREHALL, 0.2], [S.DINER, 0.2]] },
     [D.PARKLAND]:   { p: 0.05, w: [[S.LIBRARY, 0.5], [S.CHURCH, 0.5]] },
   };
-  const LOW = { [S.GROCERY]: 2, [S.DINER]: 2, [S.PHARMACY]: 3, [S.BANK]: 4, [S.HARDWARE]: 2, [S.LIBRARY]: 4, [S.SCHOOL]: 3, [S.FIREHALL]: 3, [S.CHURCH]: 3 };
+  const LOW = { [S.GROCERY]: [1, 2], [S.DINER]: [1, 2], [S.PHARMACY]: [1, 3], [S.BANK]: [2, 6], [S.HARDWARE]: [1, 2], [S.LIBRARY]: [2, 5], [S.SCHOOL]: [2, 4], [S.FIREHALL]: [2, 3], [S.CHURCH]: [2, 4] };
   const WORDS = ['Harbor', 'Maple', 'Union', 'Orbit', 'Cedar', 'Lantern', 'Copper', 'Juniper', 'Beacon', 'Willow', 'Atlas', 'Ember', 'Vista', 'Quartz', 'Meridian', 'Fable'];
   const sh = (a, b, salt) => hash2(a, b, (seedValue ^ salt) | 0) / 4294967296;
 
@@ -304,7 +325,8 @@ function generateWorld(opts = {}) {
     const word = WORDS[Math.floor(sh(b.id, k, 0x6b) * WORDS.length)];
     const label = STORE_SIGN[k][0] + STORE_SIGN[k].slice(1).toLowerCase();
     if (b.type !== D.DOWNTOWN) { // downtown shops stay as the ground floor of their tower
-      const nh = k === S.HOTEL ? Math.max(b.h, 6) : (LOW[k] || b.h);
+      const lo = LOW[k] || [b.h, b.h];
+      const nh = k === S.HOTEL ? Math.max(b.h, 6 + Math.floor(sh(b.id, 3, 0x51) * 8)) : lo[0] + Math.floor(sh(b.id, 3, 0x51) * (lo[1] - lo[0] + 1));
       for (let y = b.y0; y < b.y1; y++) for (let x = b.x0; x < b.x1; x++) if (bid[idx(x, y)] === b.id) height[idx(x, y)] = nh;
       b.h = nh;
     }
@@ -327,6 +349,7 @@ function generateWorld(opts = {}) {
   for (const b of buildings) { // random assignment
     const mix = MIX[b.type];
     if (!mix || sh(b.id, 1, 0x4d) >= mix.p) continue;
+    if (b.type !== D.DOWNTOWN && b.h > 8) continue; // towers stay towers
     const e = bestFace(b);
     if (!e) continue;
     let r = sh(b.id, 2, 0x4e) * mix.w.reduce((a, q) => a + q[1], 0), k = mix.w[mix.w.length - 1][0];
@@ -338,7 +361,7 @@ function generateWorld(opts = {}) {
                   [S.CHURCH, [D.RESIDENTIAL, D.COMMERCIAL], 3, 10], [S.GROCERY, [D.RESIDENTIAL, D.COMMERCIAL], 6, 6]];
   for (const [k, types, min, minArea] of ENSURE) {
     let have = stores.filter((s) => s.kind === k).length;
-    const pool = buildings.filter((b) => !b.store && types.includes(b.type) && (b.x1 - b.x0) * (b.y1 - b.y0) >= minArea)
+    const pool = buildings.filter((b) => !b.store && (b.h <= 8 || b.type === D.DOWNTOWN) && types.includes(b.type) && (b.x1 - b.x0) * (b.y1 - b.y0) >= minArea)
       .sort((p, q) => sh(p.id, k, 0x7c) - sh(q.id, k, 0x7c));
     for (const b of pool) {
       if (have >= min) break;
