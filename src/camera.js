@@ -6,7 +6,7 @@
  * Angle 0 faces east (+x); angles grow clockwise on a north-up map (y points south).
  */
 
-const { isWalkable, propClearance } = require('./world');
+const { isWalkable, propClearance, wrapCoord } = require('./world');
 
 const WALK_SPEED = 3.2; // tiles per second
 const RUN_SPEED = 6.0;
@@ -50,6 +50,8 @@ function stepCamera(world, cam, input, dt, run = false) {
   };
   if (ok(cam.x + dx, cam.y)) cam.x += dx;
   if (ok(cam.x, cam.y + dy)) cam.y += dy;
+  cam.x = wrapCoord(world, cam.x); // crossing the seam puts you on the other side of the map
+  cam.y = wrapCoord(world, cam.y);
   return cam;
 }
 

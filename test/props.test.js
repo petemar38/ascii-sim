@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const C = require('../src');
-const w = C.generateWorld({ seed: 'aurora', size: 128 });
+const w = C.generateWorld({ seed: 'aurora', size: 192 });
 
 test('crosswalks only on road tiles', () => {
   let n = 0;
@@ -27,7 +27,7 @@ test('lamps sit on sidewalks and light the ground nearby', () => {
   }
 });
 test('props are deterministic per seed', () => {
-  assert.deepStrictEqual(C.generateWorld({ seed: 'aurora', size: 128 }).props, w.props);
+  assert.deepStrictEqual(C.generateWorld({ seed: 'aurora', size: 192 }).props, w.props);
 });
 
 test('wires join two poles that are on the same street', () => {

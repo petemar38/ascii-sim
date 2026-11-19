@@ -44,7 +44,9 @@ function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
  * @param {{seed?: number|string, size?: number}} opts
  */
 function generateWorld(opts = {}) {
-  const size = opts.size || 128;
+  /* a multiple of 24 keeps noise cells (8) and pole spacing (12) periodic across the wrap seam */
+  const size = Math.max(48, Math.round((opts.size || 192) / 24) * 24);
+  const wrap = opts.wrap !== false;
   const seedValue = toSeed(opts.seed === undefined ? 'aurora' : opts.seed);
   const rng = mulberry32(seedValue);
   const namer = makeNamer(rng);
@@ -55,14 +57,19 @@ function generateWorld(opts = {}) {
   const district = new Uint8Array(n);
   const bid = new Uint16Array(n);
   const mark = new Uint8Array(n);
-  const idx = (x, y) => y * size + x;
+  const mod = (v) => ((v % size) + size) % size;
+  const wd = (d) => d - size * Math.round(d / size); // shortest signed difference on the torus
+  const idx = (x, y) => mod(y) * size + mod(x);        // every lookup wraps, so blocks may straddle the seam
 
   /* ---- districts: one downtown near the middle plus scattered seeds, nearest-seed wins ---- */
   const districts = [];
   districts.push({ type: D.DOWNTOWN, cx: size * (0.42 + rng() * 0.16), cy: size * (0.42 + rng() * 0.16) });
   for (const t of [D.COMMERCIAL, D.COMMERCIAL, D.RESIDENTIAL, D.RESIDENTIAL, D.RESIDENTIAL, D.INDUSTRIAL, D.PARKLAND]) {
-    districts.push({ type: t, cx: size * (0.08 + rng() * 0.84), cy: size * (0.08 + rng() * 0.84) });
+    districts.push({ type: t, cx: size * (0.15 + rng() * 0.7), cy: size * (0.15 + rng() * 0.7) });
   }
+  /* the wrap seam runs through quiet residential and parkland outskirts, far from downtown */
+  districts.push({ type: D.RESIDENTIAL, cx: 0, cy: size * 0.27 }, { type: D.PARKLAND, cx: 0, cy: size * 0.73 },
+                 { type: D.RESIDENTIAL, cx: size * 0.27, cy: 0 }, { type: D.PARKLAND, cx: size * 0.73, cy: 0 });
   for (const d of districts) d.name = namer.district(DISTRICT_TYPE_NAMES[d.type]);
 
   for (let y = 0; y < size; y++) {
@@ -70,7 +77,7 @@ function generateWorld(opts = {}) {
       const noise = (hash2(x >> 3, y >> 3, seedValue) / 4294967296) * 6;
       let best = 0, bestD = Infinity;
       for (let i = 0; i < districts.length; i++) {
-        const dx = x - districts[i].cx, dy = y - districts[i].cy;
+        const dx = wd(x - districts[i].cx), dy = wd(y - districts[i].cy);
         const dist = Math.hypot(dx, dy) * (i === 0 ? 0.9 : 1) + noise;
         if (dist < bestD) { bestD = dist; best = i; }
       }
@@ -81,24 +88,31 @@ function generateWorld(opts = {}) {
   /* ---- roads: a jittered grid; every third line is a wider named avenue ---- */
   function roadLines() {
     const out = [];
-    let p = 3 + Math.floor(rng() * 5);
-    let i = 0;
-    while (p < size - 8) {
-      const avenue = i % 3 === 0;
-      const w = avenue ? 3 : 2;
+    const start = 3 + Math.floor(rng() * 5);
+    const limit = start + size; // roads and the gaps between them tile the whole circle [start, start + size)
+    let p = start, i = 0;
+    for (;;) {
+      const avenue = i % 3 === 0, w = avenue ? 3 : 2;
+      if (limit - (p + w) < 6) break; // no room for this road plus a closing gap
       out.push({ pos: p, w, avenue, name: namer.street(avenue) });
-      p += w + 6 + Math.floor(rng() * 7);
       i++;
+      if (limit - (p + w) <= 12) break; // what is left becomes the closing gap
+      p += w + 6 + Math.floor(rng() * 7);
     }
-    return out;
+    const last = out[out.length - 1];
+    const closing = limit - (last.pos + last.w);
+    if (closing > 13) { // a closing gap that came out too wide gets one more street in the middle
+      out.push({ pos: last.pos + last.w + ((closing - 2) >> 1), w: 2, avenue: false, name: namer.street(false) });
+    }
+    return out; // positions may run a tile or two past `size`; lookups wrap
   }
   const vRoads = roadLines(); // positioned by x, run along y
   const hRoads = roadLines(); // positioned by y, run along x
 
   const vCover = new Int16Array(size).fill(-1);
   const hCover = new Int16Array(size).fill(-1);
-  vRoads.forEach((r, i) => { for (let x = r.pos; x < r.pos + r.w; x++) vCover[x] = i; });
-  hRoads.forEach((r, i) => { for (let y = r.pos; y < r.pos + r.w; y++) hCover[y] = i; });
+  vRoads.forEach((r, i) => { for (let x = r.pos; x < r.pos + r.w; x++) vCover[mod(x)] = i; });
+  hRoads.forEach((r, i) => { for (let y = r.pos; y < r.pos + r.w; y++) hCover[mod(y)] = i; });
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
@@ -108,24 +122,23 @@ function generateWorld(opts = {}) {
       kind[t] = K.ROAD;
       if (vi >= 0 && hi >= 0) continue; // intersection: unpainted
       if (vi >= 0) {
-        const r = vRoads[vi], li = x - r.pos;
+        const r = vRoads[vi], li = mod(x - r.pos);
         mark[t] = r.w === 3 ? (li === 1 ? ROAD_MARK.V_CENTER : 0) : (li === 0 ? ROAD_MARK.V_RIGHT : ROAD_MARK.V_LEFT);
       } else {
-        const r = hRoads[hi], li = y - r.pos;
+        const r = hRoads[hi], li = mod(y - r.pos);
         mark[t] = r.w === 3 ? (li === 1 ? ROAD_MARK.H_CENTER : 0) : (li === 0 ? ROAD_MARK.H_BOTTOM : ROAD_MARK.H_TOP);
       }
     }
   }
 
   /* ---- blocks: the rectangles between roads ---- */
-  function gaps(roads) {
+  function gaps(roads) { // cyclic: the last gap runs through the seam to the first road
     const out = [];
-    let start = 0;
-    for (const r of roads) {
-      if (r.pos > start) out.push([start, r.pos]);
-      start = r.pos + r.w;
+    for (let i = 0; i < roads.length; i++) {
+      const a = roads[i], b = roads[(i + 1) % roads.length];
+      const g0 = a.pos + a.w, g1 = i + 1 < roads.length ? b.pos : b.pos + size;
+      if (g1 > g0) out.push([g0, g1]);
     }
-    if (size > start) out.push([start, size]);
     return out;
   }
   const xGaps = gaps(vRoads), yGaps = gaps(hRoads);
@@ -133,7 +146,7 @@ function generateWorld(opts = {}) {
   let nextBid = 1;
 
   function pickHeight(type, x, y) {
-    const core = Math.hypot(x - districts[0].cx, y - districts[0].cy);
+    const core = Math.hypot(wd(x - districts[0].cx), wd(y - districts[0].cy));
     const falloff = Math.exp(-Math.pow(core / 16, 2)); // towers cluster in the core
     switch (type) {
       case D.DOWNTOWN: return clamp(Math.round(4 + 6 * falloff + Math.pow(rng(), 1.3) * 30 * falloff), 4, 40);
@@ -214,15 +227,15 @@ function generateWorld(opts = {}) {
   let spawn = null, bestScore = Infinity;
   for (const v of vRoads) {
     for (const h of hRoads) {
-      const x = v.pos + v.w / 2, y = h.pos + h.w / 2;
+      const x = mod(v.pos + v.w / 2), y = mod(h.pos + h.w / 2);
       if (districts[district[idx(Math.floor(x), Math.floor(y))]].type === D.DOWNTOWN) continue;
-      const score = Math.abs(Math.hypot(x - dt.cx, y - dt.cy) - 32);
-      if (score < bestScore) { bestScore = score; spawn = { x, y, angle: Math.atan2(dt.cy - y, dt.cx - x) }; }
+      const score = Math.abs(Math.hypot(wd(x - dt.cx), wd(y - dt.cy)) - 32);
+      if (score < bestScore) { bestScore = score; spawn = { x, y, angle: Math.atan2(wd(dt.cy - y), wd(dt.cx - x)) }; }
     }
   }
   if (!spawn) { // degenerate seeds: fall back to the intersection nearest the middle
     const sv = vRoads[vRoads.length >> 1], sh = hRoads[hRoads.length >> 1];
-    spawn = { x: sv.pos + sv.w / 2, y: sh.pos + sh.w / 2, angle: 0 };
+    spawn = { x: mod(sv.pos + sv.w / 2), y: mod(sh.pos + sh.w / 2), angle: 0 };
   }
 
   /* ---- landmarks: the tallest building in each district ---- */
@@ -243,7 +256,7 @@ function generateWorld(opts = {}) {
   const glow = new Uint8Array(size * size);
   const props = [];
   const h01 = (x, y, salt) => hash2(x, y, (seedValue ^ salt) | 0) / 4294967296;
-  const kindOf = (x, y) => (x < 0 || y < 0 || x >= size || y >= size ? K.NONE : kind[idx(x, y)]);
+  const kindOf = (x, y) => kind[idx(x, y)];
 
   for (const v of vRoads) {
     for (const h of hRoads) {
@@ -263,7 +276,7 @@ function generateWorld(opts = {}) {
         [v.pos - 1, h.pos + h.w, 0.85, 0.15, 1], [v.pos + v.w, h.pos + h.w, 0.15, 0.15, 0],
       ];
       for (const [cx, cy, ox, oy, par] of corners) {
-        if (kindOf(cx, cy) === K.SIDEWALK) props.push({ x: cx + ox, y: cy + oy, type: PROP.SIGNAL, v: par ^ flip });
+        if (kindOf(cx, cy) === K.SIDEWALK) props.push({ x: mod(cx) + ox, y: mod(cy) + oy, type: PROP.SIGNAL, v: par ^ flip });
       }
     }
   }
@@ -300,8 +313,8 @@ function generateWorld(opts = {}) {
   const wires = [];
   for (const [key, a] of poles) {
     const [dir, line, along] = key.split(':');
-    const b = poles.get(dir + ':' + line + ':' + (+along + 12));
-    if (b) wires.push({ x0: a.x, y0: a.y, x1: b.x, y1: b.y });
+    const b = poles.get(dir + ':' + line + ':' + ((+along + 12) % size));
+    if (b) wires.push({ x0: a.x, y0: a.y, x1: a.x + wd(b.x - a.x), y1: a.y + wd(b.y - a.y) }); // may run through the seam
   }
   /* manholes on plain road tiles */
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
@@ -320,7 +333,6 @@ function generateWorld(opts = {}) {
     if (p.type !== PROP.LAMP) continue;
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
       const tx = Math.floor(p.x) + dx, ty = Math.floor(p.y) + dy;
-      if (tx < 0 || ty < 0 || tx >= size || ty >= size) continue;
       const d = Math.hypot(tx + 0.5 - p.x, ty + 0.5 - p.y);
       if (d < 2.4) { const t = idx(tx, ty); glow[t] = Math.min(255, glow[t] + Math.round(210 * Math.pow(1 - d / 2.4, 1.4))); }
     }
@@ -336,7 +348,7 @@ function generateWorld(opts = {}) {
   }
 
   return {
-    seed: seedValue, size, kind, height, district, bid, mark, deco, glow, props, wires, propGrid,
+    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, propGrid,
     districts, vRoads, hRoads, spawn, landmarks,
   };
 }
@@ -344,34 +356,46 @@ function generateWorld(opts = {}) {
 /* ---------- queries ---------- */
 
 function inBounds(world, x, y) {
-  return x >= 0 && y >= 0 && x < world.size && y < world.size;
+  return world.wrap || (x >= 0 && y >= 0 && x < world.size && y < world.size);
 }
 
-/** Building height in floors at a (possibly fractional) position; EDGE_HEIGHT outside the map. */
+/** Wrap a coordinate into [0, size). Identity when the world has walls. */
+function wrapCoord(world, v) {
+  return world.wrap ? ((v % world.size) + world.size) % world.size : v;
+}
+
+/** Shortest signed difference between two coordinates. Plain subtraction when the world has walls. */
+function wrapDelta(world, d) {
+  return world.wrap ? d - world.size * Math.round(d / world.size) : d;
+}
+
+function tileAt(world, x, y) {
+  const tx = Math.floor(wrapCoord(world, x)), ty = Math.floor(wrapCoord(world, y));
+  return inBounds(world, tx, ty) ? ty * world.size + tx : -1;
+}
+
+/** Building height in floors at a (possibly fractional) position; EDGE_HEIGHT outside a walled map. */
 function heightAt(world, x, y) {
-  const tx = Math.floor(x), ty = Math.floor(y);
-  if (!inBounds(world, tx, ty)) return EDGE_HEIGHT;
-  return world.height[ty * world.size + tx];
+  const t = tileAt(world, x, y);
+  return t < 0 ? EDGE_HEIGHT : world.height[t];
 }
 
 function kindAt(world, x, y) {
-  const tx = Math.floor(x), ty = Math.floor(y);
-  if (!inBounds(world, tx, ty)) return K.NONE;
-  return world.kind[ty * world.size + tx];
+  const t = tileAt(world, x, y);
+  return t < 0 ? K.NONE : world.kind[t];
 }
 
 /** A point is walkable when it is inside the map and not inside a building. */
 function isWalkable(world, x, y) {
-  const tx = Math.floor(x), ty = Math.floor(y);
-  if (!inBounds(world, tx, ty)) return false;
-  return world.height[ty * world.size + tx] === 0;
+  const t = tileAt(world, x, y);
+  return t >= 0 && world.height[t] === 0;
 }
 
 /** Nearest road on one axis (distance measured to the road's center line). */
-function nearestRoad(roads, p) {
+function nearestRoad(world, roads, p) {
   let best = roads[0], bd = Infinity;
   for (const r of roads) {
-    const d = Math.abs(p - (r.pos + r.w / 2));
+    const d = Math.abs(wrapDelta(world, p - (r.pos + r.w / 2)));
     if (d < bd) { bd = d; best = r; }
   }
   return { road: best, dist: bd };
@@ -382,12 +406,13 @@ function nearestRoad(roads, p) {
  * "Street" is whichever road is closest; "cross" is the nearest road on the other axis.
  */
 function locate(world, x, y) {
-  const cxp = clamp(x, 0, world.size - 1e-6), cyp = clamp(y, 0, world.size - 1e-6);
+  const cxp = world.wrap ? wrapCoord(world, x) : clamp(x, 0, world.size - 1e-6);
+  const cyp = world.wrap ? wrapCoord(world, y) : clamp(y, 0, world.size - 1e-6);
   const tx = Math.floor(cxp), ty = Math.floor(cyp);
   const t = ty * world.size + tx;
   const d = world.districts[world.district[t]];
-  const v = nearestRoad(world.vRoads, cxp); // vertical road: distance along x
-  const h = nearestRoad(world.hRoads, cyp);
+  const v = nearestRoad(world, world.vRoads, cxp); // vertical road: distance along x
+  const h = nearestRoad(world, world.hRoads, cyp);
   const alongV = v.dist <= h.dist;
   return {
     district: d.name,
@@ -405,16 +430,17 @@ function locate(world, x, y) {
  * Negative means overlapping. Infinity when nothing is close.
  */
 function propClearance(world, x, y, r) {
-  const tx = Math.floor(x), ty = Math.floor(y), size = world.size;
+  const size = world.size;
+  const tx = Math.floor(wrapCoord(world, x)), ty = Math.floor(wrapCoord(world, y));
   let best = Infinity;
   for (let j = ty - 1; j <= ty + 1; j++) {
-    if (j < 0 || j >= size) continue;
     for (let i = tx - 1; i <= tx + 1; i++) {
-      if (i < 0 || i >= size) continue;
-      const list = world.propGrid.get(j * size + i);
+      let ci = i, cj = j;
+      if (world.wrap) { ci = (i + size) % size; cj = (j + size) % size; } else if (i < 0 || j < 0 || i >= size || j >= size) continue;
+      const list = world.propGrid.get(cj * size + ci);
       if (!list) continue;
       for (const p of list) {
-        const c = Math.hypot(p.x - x, p.y - y) - r - PROP_RADIUS[p.type];
+        const c = Math.hypot(wrapDelta(world, p.x - x), wrapDelta(world, p.y - y)) - r - PROP_RADIUS[p.type];
         if (c < best) best = c;
       }
     }
@@ -432,5 +458,5 @@ function worldHash(world) {
 
 module.exports = {
   K, D, DISTRICT_TYPE_NAMES, ROAD_MARK, EDGE_HEIGHT, PROP, DECO,
-  generateWorld, inBounds, heightAt, kindAt, isWalkable, locate, worldHash, propClearance, PROP_RADIUS,
+  generateWorld, inBounds, heightAt, kindAt, isWalkable, locate, worldHash, propClearance, PROP_RADIUS, wrapCoord, wrapDelta,
 };

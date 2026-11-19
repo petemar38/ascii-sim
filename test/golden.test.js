@@ -6,7 +6,7 @@ const path = require('node:path');
 const C = require('../src');
 
 const file = path.join(__dirname, 'golden.json');
-const w = C.generateWorld({ seed: 'aurora', size: 128 });
+const w = C.generateWorld({ seed: 'aurora', size: 192 });
 const cam = C.createCamera(w);
 const out = { world: C.worldHash(w) };
 for (const t of [8, 12, 21]) {

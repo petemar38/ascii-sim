@@ -23,7 +23,7 @@ function args() {
 }
 
 const opt = args();
-const world = C.generateWorld({ seed: opt.seed === undefined ? 'aurora' : (isNaN(+opt.seed) ? opt.seed : +opt.seed), size: +opt.size || 128 });
+const world = C.generateWorld({ seed: opt.seed === undefined ? 'aurora' : (isNaN(+opt.seed) ? opt.seed : +opt.seed), size: +opt.size || 192 });
 const cam = C.createCamera(world);
 let time = opt.time !== undefined ? +opt.time : 21;
 const HUD_LINES = 6;

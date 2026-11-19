@@ -24,6 +24,21 @@ The first world is a procedural city you can walk through: a CPU raycaster draws
     bin/play.js     terminal player
     web/template.html + tools/bundle.js   browser front end
 
+## The world wraps
+
+The map is a torus: walk off one edge and you arrive on the opposite one, and you can see straight
+through the seam. The generator lays roads, blocks and districts out periodically (the seam runs through
+quiet residential and parkland outskirts, far from downtown), and every lookup (`heightAt`, `kindAt`,
+`isWalkable`, `locate`, collision, sprites, wires, lamp glow) wraps. Default size is 192 tiles; sizes are
+rounded to a multiple of 24 so everything stays periodic. View distance is 56 tiles, well under the map
+width, so you never see the same buildings twice.
+
+    generateWorld({ seed: 'aurora', size: 192 })               // wraps (default)
+    generateWorld({ seed: 'aurora', size: 192, wrap: false })  // walled map, same city
+
+Use `wrapDelta(world, d)` for the shortest signed difference between two coordinates and
+`wrapCoord(world, v)` to normalise one. Anything that measures a distance should use them.
+
 ## Conventions
 
 x east, y south. Angle 0 faces east, clockwise. One tile is about 8 m; one floor is 0.4 tile.

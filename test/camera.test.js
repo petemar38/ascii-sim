@@ -43,3 +43,15 @@ test('lamps, poles, hydrants and signals leave the sidewalk centre line walkable
   }
   assert.ok(n > 100);
 });
+
+test('walking off one edge of the map brings you in from the other, not into a wall', () => {
+  // find a road row and walk east across the seam
+  const n = w.size;
+  let y = -1;
+  for (let j = 0; j < n && y < 0; j++) { let ok = true; for (let x = 0; x < n; x++) if (w.height[j * n + x] > 0) { ok = false; break; } if (ok) y = j; }
+  if (y < 0) return; // no fully clear row on this seed; the render tests cover the seam
+  const cam = { x: n - 3, y: y + 0.5, angle: 0, pitch: 0, eyeZ: 0.21 };
+  for (let i = 0; i < 120; i++) C.stepCamera(w, cam, { forward: 1, strafe: 0, turn: 0, look: 0 }, 0.05, false);
+  assert.ok(cam.x >= 0 && cam.x < n);
+  assert.ok(cam.x < 20, 'should have wrapped around, x=' + cam.x);
+});

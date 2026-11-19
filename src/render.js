@@ -79,6 +79,7 @@ function render(frame, world, cam, opts = {}) {
   const light = lighting(time);
   const { ambient, night } = light;
   const size = world.size;
+  const wrap = world.wrap !== false; // torus: the map has no edge, it joins up with itself
   const seed = world.seed | 0;
 
   const tanHalf = Math.tan(fov / 2);
@@ -134,10 +135,11 @@ function render(frame, world, cam, opts = {}) {
         ch[i] = code; tone[i] = tn; id[i] = 0; zbuf[i] = 1e9;
       } else {
         const d = rowDist[r];
-        const px = cam.x + rdx * d, py = cam.y + rdy * d;
+        let px = cam.x + rdx * d, py = cam.y + rdy * d;
+        if (wrap) { px -= size * Math.floor(px / size); py -= size * Math.floor(py / size); } // so textures match from both sides of the seam
         const tx = Math.floor(px), ty = Math.floor(py);
         id[i] = 0; zbuf[i] = d;
-        if (tx < 0 || ty < 0 || tx >= size || ty >= size) { ch[i] = 32; tone[i] = TONE.VOID; continue; }
+        if (!wrap && (tx < 0 || ty < 0 || tx >= size || ty >= size)) { ch[i] = 32; tone[i] = TONE.VOID; continue; }
         const t = ty * size + tx;
         const fx = px - tx, fy = py - ty;
         let b, tn, parkHash = -1;
@@ -173,8 +175,10 @@ function render(frame, world, cam, opts = {}) {
             b = 0.50 - ((fx % 0.5) < 0.07 || (fy % 0.5) < 0.07 ? 0.16 : 0); tn = TONE.SIDEWALK; // paving joints
             if (d < 34) { // curb: a bright lip on the side facing the road, so blocks read apart from streets
               const k = world.kind;
-              if ((fx < 0.14 && tx > 0 && k[t - 1] === K.ROAD) || (fx > 0.86 && tx < size - 1 && k[t + 1] === K.ROAD) ||
-                  (fy < 0.14 && ty > 0 && k[t - size] === K.ROAD) || (fy > 0.86 && ty < size - 1 && k[t + size] === K.ROAD)) { b = 0.86; tn = TONE.CURB; }
+              const xl = tx > 0 ? tx - 1 : wrap ? size - 1 : -1, xr = tx < size - 1 ? tx + 1 : wrap ? 0 : -1;
+              const yu = ty > 0 ? ty - 1 : wrap ? size - 1 : -1, yd = ty < size - 1 ? ty + 1 : wrap ? 0 : -1;
+              if ((fx < 0.14 && xl >= 0 && k[ty * size + xl] === K.ROAD) || (fx > 0.86 && xr >= 0 && k[ty * size + xr] === K.ROAD) ||
+                  (fy < 0.14 && yu >= 0 && k[yu * size + tx] === K.ROAD) || (fy > 0.86 && yd >= 0 && k[yd * size + tx] === K.ROAD)) { b = 0.86; tn = TONE.CURB; }
             }
             break;
           case K.PARK:
@@ -213,8 +217,9 @@ function render(frame, world, cam, opts = {}) {
       if (perp > viewDist) break;
       if (perp < 0.02) continue;
 
-      const oob = mapX < 0 || mapY < 0 || mapX >= size || mapY >= size;
-      const t = oob ? -1 : mapY * size + mapX;
+      const wx0 = wrap ? ((mapX % size) + size) % size : mapX, wy0 = wrap ? ((mapY % size) + size) % size : mapY;
+      const oob = !wrap && (mapX < 0 || mapY < 0 || mapX >= size || mapY >= size);
+      const t = oob ? -1 : wy0 * size + wx0;
       const h = oob ? EDGE_HEIGHT : world.height[t];
       if (h <= maxH) continue;
       maxH = h;
@@ -241,7 +246,7 @@ function render(frame, world, cam, opts = {}) {
         const colsPerTile = focalX / perp;
         const fineV = rowsPerFloor >= 1.7, fineH = colsPerTile >= 7;
         /* fire escape on some facades: platforms every floor, rails at the sides, a diagonal stair */
-        const escOn = !oob && fineV && f > 0.2 && h >= 4 && h <= 18 && hash2(mapX * 5 + side, mapY * 3, seed ^ 0xfe) / 4294967296 < 0.06;
+        const escOn = !oob && fineV && f > 0.2 && h >= 4 && h <= 18 && hash2(wx0 * 5 + side, wy0 * 3, seed ^ 0xfe) / 4294967296 < 0.06;
 
         for (let r = rs; r < re; r++) {
           const z = eyeZ + (hz - (r + 0.5)) * perpOverFocal;
@@ -298,7 +303,7 @@ function render(frame, world, cam, opts = {}) {
   }
   edgePass(frame);
   if (world.props && world.props.length) {
-    drawProps(frame, world, cam, { hz, focalX, focalY, tanHalf, dirX, dirY, planeX, planeY, eyeZ, viewDist, light, haze, seed });
+    drawProps(frame, world, cam, { wrapD: wrap ? (d) => d - size * Math.round(d / size) : (d) => d, hz, focalX, focalY, tanHalf, dirX, dirY, planeX, planeY, eyeZ, viewDist, light, haze, seed });
   }
   return frame;
 }
@@ -349,7 +354,7 @@ function drawWires(frame, world, cam, g) {
   const { cols, rows, ch, tone, id, z } = frame;
   for (const w of wires) {
     const mx = (w.x0 + w.x1) / 2, my = (w.y0 + w.y1) / 2;
-    if (Math.hypot(mx - cam.x, my - cam.y) > g.viewDist * 0.75) continue;
+    if (Math.hypot(g.wrapD(mx - cam.x), g.wrapD(my - cam.y)) > g.viewDist * 0.75) continue;
     const len = Math.hypot(w.x1 - w.x0, w.y1 - w.y0);
     const nx = -(w.y1 - w.y0) / len, ny = (w.x1 - w.x0) / len; // sideways, for the two conductors
     const n = Math.min(120, Math.ceil(len * 6));
@@ -360,7 +365,7 @@ function drawWires(frame, world, cam, g) {
         const t = k / n;
         const x = w.x0 + (w.x1 - w.x0) * t + nx * off, y = w.y0 + (w.y1 - w.y0) * t + ny * off;
         const zz = zb - 0.1 * (len / 6) * 4 * t * (1 - t); // catenary-ish sag
-        const dx = x - cam.x, dy = y - cam.y;
+        const dx = g.wrapD(x - cam.x), dy = g.wrapD(y - cam.y);
         const dep = dx * g.dirX + dy * g.dirY;
         if (dep < 0.4) { have = false; continue; }
         const camX = (dx * g.planeX + dy * g.planeY) / dep;
@@ -393,7 +398,7 @@ function drawProps(frame, world, cam, g) {
   const vis = [];
   for (let n = 0; n < props.length; n++) {
     const p = props[n];
-    const dx = p.x - cam.x, dy = p.y - cam.y;
+    const dx = g.wrapD(p.x - cam.x), dy = g.wrapD(p.y - cam.y);
     const dep = dx * g.dirX + dy * g.dirY;
     if (dep < 0.4 || dep > g.viewDist) continue;
     const camX = (dx * g.planeX + dy * g.planeY) / dep;
