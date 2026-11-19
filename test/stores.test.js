@@ -51,3 +51,43 @@ test('standing in front of a store you can read its sign', () => {
   }
   assert.ok(read >= 8);
 });
+
+test('every kind of shop has its own look (facade signatures are all different)', () => {
+  const { shopCell } = require('../src/facade');
+  const sig = (kind, center, fl) => {
+    let s = '';
+    for (let vi = 0; vi < 24; vi++) for (let ui = 0; ui < 24; ui++) s += shopCell(kind, center, (ui + 0.5) / 24, (vi + 0.5) / 24, fl) + ',' + shopCell.glass + ';';
+    return s;
+  };
+  const seen = new Map();
+  for (const k of Object.values(C.STORE)) {
+    const s = sig(k, true, 0) + '|' + sig(k, false, 0) + '|' + sig(k, true, 1);
+    assert.ok(!seen.has(s), C.STORE_SIGN[k] + ' looks identical to ' + seen.get(s));
+    seen.set(s, C.STORE_SIGN[k]);
+  }
+  // and they are not just minor variations: each pair differs in a meaningful share of cells
+  const kinds = Object.values(C.STORE);
+  for (let a = 0; a < kinds.length; a++) for (let b = a + 1; b < kinds.length; b++) {
+    let diff = 0;
+    for (let vi = 0; vi < 20; vi++) for (let ui = 0; ui < 20; ui++) {
+      const u = (ui + 0.5) / 20, v = (vi + 0.5) / 20;
+      const ga = shopCell(kinds[a], true, u, v, 0) + '/' + shopCell.glass;
+      const gb = shopCell(kinds[b], true, u, v, 0) + '/' + shopCell.glass;
+      if (ga !== gb) diff++;
+    }
+    assert.ok(diff >= 20, C.STORE_SIGN[kinds[a]] + ' and ' + C.STORE_SIGN[kinds[b]] + ' differ in only ' + diff + ' of 400 cells');
+  }
+});
+test('the whole street wall of a shop is a storefront, with the door and sign on the middle tile', () => {
+  let wide = 0;
+  for (const s of w.stores) {
+    assert.ok(s.facade.includes(s.anchorTile));
+    for (const ti of s.facade) { assert.strictEqual(w.facades.get(ti), s); assert.strictEqual(w.kind[ti], C.K.BUILDING); }
+    if (s.facade.length >= 3) wide++;
+  }
+  assert.ok(wide >= 20, 'only ' + wide + ' shops have a wide facade');
+});
+test('shops can be told apart from far away by their rooftops', () => {
+  const kinds = new Set(w.props.filter((p) => p.type === C.PROP.ROOFPIECE).map((p) => p.k));
+  for (const k of [C.STORE.FIREHALL, C.STORE.SCHOOL, C.STORE.LIBRARY, C.STORE.HOTEL, C.STORE.PHARMACY, C.STORE.DINER, C.STORE.BANK]) assert.ok(kinds.has(k), 'no rooftop piece for ' + C.STORE_SIGN[k]);
+});

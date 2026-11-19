@@ -27,10 +27,15 @@ The first world is a procedural city you can walk through: a CPU raycaster draws
 ## Stores and public buildings
 
 `world.stores` lists shops and public buildings (grocery, library, pharmacy, diner, bank, hotel, school,
-firehall, church, hardware) with a name, sign text, position and which way the storefront faces. Each gets a
-ground-floor storefront on the face looking onto the street: a door, display windows (lit at night), a striped
-awning, a sign you can read from a few tiles away, columns on libraries, and a steeple on churches. Stores are
-assigned with `hash2` only, so adding or tuning them never changes the road layout.
+firehall, church, hardware) with a name, sign text, position and which way the storefront faces.
+The whole street-facing wall of each one is drawn as a storefront (`world.facades`), and `src/facade.js`
+decides what each kind looks like: striped awnings and sliding doors on groceries, a checker cornice and
+chrome band on diners, stone columns and steps on banks, bay doors on firehalls, a rose window on churches,
+a clock on schools, a deep canopy on hotels, shutter doors and crates at hardware stores, crosses on
+pharmacies, a portico on libraries. Display windows light up at night, and the middle tile carries the door and
+a sign you can read from a few tiles away. Most kinds also have a distinctive rooftop piece (hose tower, flagpole,
+dome, cross, sign) so you can tell them apart from far away. A test fails if two kinds ever look alike.
+Stores are assigned with `hash2` only, so adding or tuning them never changes the road layout.
 
 ## Finding buildings
 

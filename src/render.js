@@ -13,10 +13,10 @@
 
 const { hash2 } = require('./rng');
 const { K, ROAD_MARK, EDGE_HEIGHT, PROP, DECO, STORE } = require('./world');
+const { shopCell } = require('./facade');
 
 const FLOOR_H = 0.4; // one floor, in tiles (a tile is ~8 m, so ~3.2 m per floor)
 const WINDOWS_PER_TILE = 3;
-const AWNING = new Set([STORE.GROCERY, STORE.DINER, STORE.PHARMACY, STORE.HARDWARE, STORE.HOTEL, STORE.BANK]);
 
 const RAMP = ' .:-=+*#%@';
 const RAMP_LAST = RAMP.length - 1;
@@ -247,7 +247,7 @@ function render(frame, world, cam, opts = {}) {
         const colsPerTile = focalX / perp;
         const fineV = rowsPerFloor >= 1.7, fineH = colsPerTile >= 7;
         /* fire escape on some facades: platforms every floor, rails at the sides, a diagonal stair */
-        const shop = !oob && world.shops ? world.shops.get(t) : undefined;
+        const shop = !oob && world.facades ? world.facades.get(t) : undefined; // any tile on a shop's street wall
         const escOn = !shop && !oob && fineV && f > 0.2 && h >= 4 && h <= 18 && hash2(wx0 * 5 + side, wy0 * 3, seed ^ 0xfe) / 4294967296 < 0.06;
 
         /* storefront: only on the one face of a shop building that looks onto the street */
@@ -255,8 +255,9 @@ function render(frame, world, cam, opts = {}) {
         const storefront = shop !== undefined && shop.face === hitFace && fineV && f > 0.22;
         const flip = hitFace === 1 || hitFace === 4; // read signs left to right as seen from the street
         const uu = flip ? 1 - wx : wx;
-        const signLen = storefront ? shop.sign.length : 0;
-        const signOn = storefront && colsPerTile >= 12 && rowsPerFloor >= 2.5;
+        const isCenter = storefront && shop.anchorTile === t; // door and sign live on the middle tile
+        const signLen = isCenter ? shop.sign.length : 0;
+        const signOn = isCenter && colsPerTile >= 12 && rowsPerFloor >= 2.5;
         const signX0 = 0.5 - signLen * 0.05;
         const rowVf = 1 / rowsPerFloor;
         const cpc = colsPerTile * 0.1; // columns per sign letter
@@ -274,7 +275,7 @@ function render(frame, world, cam, opts = {}) {
           } else {
             const inV = fineV ? (vf > 0.22 && vf < 0.78) : (vf > 0.12 && vf < 0.88);
             const inH = fineH ? (wf > 0.2 && wf < 0.8) : true;
-            const shopFloor = storefront && fl === 0;
+            const shopFloor = storefront && fl <= 1;
             const isWin = fl >= 0 && inV && inH && !shopFloor;
             if (isWin) {
               const occupied = hash2(bId, 7, seed) / 4294967296 < 0.9;
@@ -296,21 +297,19 @@ function render(frame, world, cam, opts = {}) {
               if (r === rs && topRow >= 0) b += 0.10 * f; // roof edge catches light
             }
           }
-          if (storefront && fl === 0) {
+          if (storefront && fl <= 1) {
             const u = uu;
-            const inDoor = u > 0.43 && u < 0.57 && vf < 0.52;
-            if (signOn && vf > 0.7 && Math.abs(vf - 0.82) <= rowVf * 0.5 && u >= signX0 && u < signX0 + signLen * 0.1) {
+            if (fl === 0 && signOn && vf > 0.78 && Math.abs(vf - 0.88) <= rowVf * 0.5 && u >= signX0 && u < signX0 + signLen * 0.1) {
               const s = (u - signX0) / 0.1, ci = Math.floor(s);
               if (Math.abs(s - ci - 0.5) <= 0.55 / cpc) { sp = shop.sign.charCodeAt(ci); tn = TONE.SIGN; }
-            } else if (inDoor) {
-              sp = (u < 0.45 || u > 0.55) ? 124 : 32; tn = TONE.DOOR;
-            } else if (shop.kind === STORE.LIBRARY && vf < 0.92 && (Math.abs(u - 0.12) < 0.03 || Math.abs(u - 0.32) < 0.03 || Math.abs(u - 0.68) < 0.03 || Math.abs(u - 0.88) < 0.03)) {
-              sp = 124; tn = TONE.COLUMN; // portico columns
-            } else if (AWNING.has(shop.kind) && vf >= 0.54 && vf < 0.68) {
-              sp = (Math.floor(u * 16) & 1) ? 35 : 61; tn = TONE.AWNING; // striped awning
-            } else if (vf > 0.1 && vf < 0.5 && ((u > 0.08 && u < 0.4) || (u > 0.6 && u < 0.92))) { // shop windows, lit at night
-              if (night > 0.2) { const fw = Math.pow(f, 0.45); b = (0.55 + 0.4 * night) * fw + haze * (1 - fw); tn = TONE.WINDOW_LIT; }
-              else { b = wallBase * 0.4 * f + haze * (1 - f); tn = TONE.WINDOW_DARK; }
+            }
+            if (!sp) {
+              const g = shopCell(shop.kind, isCenter, u, vf, fl);
+              if (g) { sp = g; tn = shopCell.tone; }
+              else if (shopCell.glass) { // display window, lit at night
+                if (night > 0.2) { const fw = Math.pow(f, 0.45); b = (0.55 + 0.4 * night) * fw + haze * (1 - fw); tn = TONE.WINDOW_LIT; }
+                else { b = wallBase * 0.4 * f + haze * (1 - f); tn = TONE.WINDOW_DARK; }
+              }
             }
           }
           if (escOn && fl >= 1 && fl < h) {
@@ -458,6 +457,39 @@ function drawProps(frame, world, cam, g) {
       box(frame, g, sx, 0.2, z0, z0 + 0.1, dep, 124, TONE.TANK, 1);        // legs
       box(frame, g, sx, 0.3, z0 + 0.1, z0 + 0.3, dep, 35, TONE.TANK, 1);   // tank '#'
       box(frame, g, sx, 0.14, z0 + 0.3, z0 + 0.36, dep, 94, TONE.TANK, 1); // roof '^'
+    } else if (p.type === PROP.ROOFPIECE) {
+      const z0 = p.v * FLOOR_H;
+      switch (p.k) {
+        case STORE.FIREHALL: // hose tower
+          box(frame, g, sx, 0.16, z0, z0 + 0.42, dep, 72, TONE.TANK, 1);
+          box(frame, g, sx, 0.2, z0 + 0.42, z0 + 0.48, dep, 61, TONE.TANK, 1);
+          break;
+        case STORE.SCHOOL: // flagpole and flag
+          box(frame, g, sx, 0.025, z0, z0 + 0.6, dep, 124, TONE.LAMP, 1);
+          box(frame, g, sx, 0.12, z0 + 0.46, z0 + 0.58, dep, 62, TONE.SIGN, 1);
+          break;
+        case STORE.LIBRARY: // low dome
+          box(frame, g, sx, 0.3, z0, z0 + 0.07, dep, 61, TONE.TANK, 1);
+          box(frame, g, sx, 0.2, z0 + 0.07, z0 + 0.14, dep, 40, TONE.TANK, 1);
+          box(frame, g, sx, 0.05, z0 + 0.14, z0 + 0.2, dep, 124, TONE.TANK, 1);
+          break;
+        case STORE.HOTEL: // rooftop sign block on a mast
+          box(frame, g, sx, 0.04, z0, z0 + 0.3, dep, 124, TONE.LAMP, 1);
+          box(frame, g, sx, 0.24, z0 + 0.24, z0 + 0.4, dep, lampOn ? 64 : 72, lampOn ? TONE.LAMP_LIT : TONE.TANK, 1);
+          break;
+        case STORE.PHARMACY: // rooftop cross
+          box(frame, g, sx, 0.04, z0, z0 + 0.3, dep, 43, TONE.SIGN, 1);
+          box(frame, g, sx, 0.16, z0 + 0.18, z0 + 0.23, dep, 43, TONE.SIGN, 1);
+          break;
+        case STORE.DINER: // roof sign
+          box(frame, g, sx, 0.22, z0, z0 + 0.1, dep, lampOn ? 42 : 61, lampOn ? TONE.SIGN : TONE.TANK, 1);
+          break;
+        case STORE.BANK: // flag on a short pole
+          box(frame, g, sx, 0.025, z0, z0 + 0.36, dep, 124, TONE.LAMP, 1);
+          box(frame, g, sx, 0.1, z0 + 0.28, z0 + 0.36, dep, 62, TONE.SIGN, 1);
+          break;
+        default: break;
+      }
     } else if (p.type === PROP.STEEPLE) {
       const z0 = p.v * FLOOR_H;
       box(frame, g, sx, 0.2, z0, z0 + 0.3, dep, 72, TONE.TANK, 1);          // tower 'H'

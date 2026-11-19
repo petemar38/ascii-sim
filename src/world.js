@@ -40,7 +40,7 @@ const PROP_RADIUS = { 1: 0.07, 2: 0.11, 3: 0.07, 4: 0.09, 5: 0.08 }; // lamp, tr
 const EDGE_HEIGHT = 90;
 
 /** Street furniture ("props"): standing objects drawn as sprites. */
-const PROP = { LAMP: 1, TREE: 2, SIGNAL: 3, HYDRANT: 4, POLE: 5, TANK: 6, ANTENNA: 7, STEEPLE: 8 };
+const PROP = { LAMP: 1, TREE: 2, SIGNAL: 3, HYDRANT: 4, POLE: 5, TANK: 6, ANTENNA: 7, STEEPLE: 8, ROOFPIECE: 9 };
 /** deco[]: crosswalk on a road tile, named for the intersection arm it sits on. */
 const DECO = { NONE: 0, CROSS_N: 1, CROSS_S: 2, CROSS_W: 3, CROSS_E: 4, MANHOLE: 5 };
 
@@ -264,6 +264,7 @@ function generateWorld(opts = {}) {
    * A store needs a face looking onto a sidewalk, road or plaza; that face carries the storefront and sign. */
   const stores = [];
   const shops = new Map(); // anchor tile index -> store record
+  const facades = new Map(); // every tile along a shop's street-facing wall -> store record (the anchor tile holds door and sign)
   const OPEN = (k) => k === K.SIDEWALK || k === K.ROAD || k === K.PLAZA;
   const S = STORE;
   const MIX = { // probability a building is a store, and what kind
@@ -309,6 +310,15 @@ function generateWorld(opts = {}) {
     }
     const rec = { id: b.id, kind: k, sign: STORE_SIGN[k], name: word + ' ' + label, x: mod(e.x) + 0.5, y: mod(e.y) + 0.5, face: e.face,
                   x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, height: b.h, district: district[idx(e.x, e.y)] };
+    rec.anchorTile = idx(e.x, e.y);
+    const [ox, oy] = { [FACE.N]: [0, -1], [FACE.S]: [0, 1], [FACE.W]: [-1, 0], [FACE.E]: [1, 0] }[e.face];
+    rec.facade = [];
+    const along = e.face === FACE.N || e.face === FACE.S ? [b.x0, b.x1] : [b.y0, b.y1];
+    for (let k = along[0]; k < along[1]; k++) { // the whole wall, not just the middle tile
+      const tx = e.face === FACE.N || e.face === FACE.S ? k : e.x, ty = e.face === FACE.N || e.face === FACE.S ? e.y : k;
+      const ti = idx(tx, ty);
+      if (kind[ti] === K.BUILDING && bid[ti] === b.id && OPEN(kind[idx(tx + ox, ty + oy)])) { facades.set(ti, rec); rec.facade.push(ti); }
+    }
     stores.push(rec);
     shops.set(idx(e.x, e.y), rec);
     b.store = rec;
@@ -343,8 +353,12 @@ function generateWorld(opts = {}) {
   const frontage = new Set();
   for (const s of stores) {
     const [fx, fy] = { [FACE.N]: [0, -1], [FACE.S]: [0, 1], [FACE.W]: [-1, 0], [FACE.E]: [1, 0] }[s.face];
-    const ax = Math.floor(s.x), ay = Math.floor(s.y);
-    for (let k = -1; k <= 1; k++) frontage.add(idx(ax + fx + (fx === 0 ? k : 0), ay + fy + (fy === 0 ? k : 0)));
+    for (const ti of s.facade) {
+      const tx = ti % size, ty = (ti / size) | 0;
+      frontage.add(idx(tx + fx, ty + fy));
+      frontage.add(idx(tx + fx + (fx === 0 ? 1 : 0), ty + fy + (fy === 0 ? 1 : 0)));
+      frontage.add(idx(tx + fx - (fx === 0 ? 1 : 0), ty + fy - (fy === 0 ? 1 : 0)));
+    }
   }
 
   /* ---- street furniture: uses hash2 only, so it never disturbs the generator's random stream ---- */
@@ -426,6 +440,11 @@ function generateWorld(opts = {}) {
     if (hh >= 5 && hh <= 18 && h01(x, y, 0x77) < 0.012) props.push({ x: x + 0.5, y: y + 0.5, type: PROP.TANK, v: hh });
     else if (hh >= 22 && h01(x, y, 0x78) < 0.05) props.push({ x: x + 0.5, y: y + 0.5, type: PROP.ANTENNA, v: hh });
   }
+  for (const s of stores) { // a distinctive rooftop piece, so each kind can be told apart from far away
+    if ([STORE.FIREHALL, STORE.SCHOOL, STORE.LIBRARY, STORE.HOTEL, STORE.PHARMACY, STORE.DINER, STORE.BANK].includes(s.kind)) {
+      props.push({ x: mod((s.x0 + s.x1) / 2), y: mod((s.y0 + s.y1) / 2), type: PROP.ROOFPIECE, v: s.height, k: s.kind });
+    }
+  }
   for (const s of stores) if (s.kind === STORE.CHURCH) { // a steeple on every church
     props.push({ x: mod((s.x0 + s.x1) / 2), y: mod((s.y0 + s.y1) / 2), type: PROP.STEEPLE, v: s.height });
   }
@@ -448,7 +467,7 @@ function generateWorld(opts = {}) {
   }
 
   return {
-    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, propGrid, stores, shops,
+    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, propGrid, stores, shops, facades,
     districts, vRoads, hRoads, spawn, landmarks,
   };
 }
