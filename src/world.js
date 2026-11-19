@@ -27,6 +27,12 @@ const DISTRICT_TYPE_NAMES = ['downtown', 'commercial', 'residential', 'industria
 /** Road paint. v = vertical road (runs north-south), h = horizontal road (runs east-west). */
 const ROAD_MARK = { NONE: 0, V_CENTER: 1, V_LEFT: 2, V_RIGHT: 3, H_CENTER: 4, H_TOP: 5, H_BOTTOM: 6 };
 
+/** Kinds of shops and public buildings. STORE_SIGN is the text painted on the sign (8 characters at most). */
+const STORE = { GROCERY: 1, LIBRARY: 2, PHARMACY: 3, DINER: 4, BANK: 5, HOTEL: 6, SCHOOL: 7, FIREHALL: 8, CHURCH: 9, HARDWARE: 10 };
+const STORE_SIGN = ['', 'GROCERY', 'LIBRARY', 'PHARMACY', 'DINER', 'BANK', 'HOTEL', 'SCHOOL', 'FIREHALL', 'CHURCH', 'HARDWARE'];
+/** Which face of a building carries its storefront (the direction the face looks towards). */
+const FACE = { N: 1, S: 2, W: 3, E: 4 };
+
 /** Solid footprint radius (tiles) of props that block walking. Rooftop props and wires are not solid. */
 const PROP_RADIUS = { 1: 0.07, 2: 0.11, 3: 0.07, 4: 0.09, 5: 0.08 }; // lamp, tree trunk, signal, hydrant, pole
 
@@ -34,7 +40,7 @@ const PROP_RADIUS = { 1: 0.07, 2: 0.11, 3: 0.07, 4: 0.09, 5: 0.08 }; // lamp, tr
 const EDGE_HEIGHT = 90;
 
 /** Street furniture ("props"): standing objects drawn as sprites. */
-const PROP = { LAMP: 1, TREE: 2, SIGNAL: 3, HYDRANT: 4, POLE: 5, TANK: 6, ANTENNA: 7 };
+const PROP = { LAMP: 1, TREE: 2, SIGNAL: 3, HYDRANT: 4, POLE: 5, TANK: 6, ANTENNA: 7, STEEPLE: 8 };
 /** deco[]: crosswalk on a road tile, named for the intersection arm it sits on. */
 const DECO = { NONE: 0, CROSS_N: 1, CROSS_S: 2, CROSS_W: 3, CROSS_E: 4, MANHOLE: 5 };
 
@@ -144,6 +150,7 @@ function generateWorld(opts = {}) {
   const xGaps = gaps(vRoads), yGaps = gaps(hRoads);
 
   let nextBid = 1;
+  const buildings = []; // every lot placed: {id, x0, y0, x1, y1, h, type}
 
   function pickHeight(type, x, y) {
     const core = Math.hypot(wd(x - districts[0].cx), wd(y - districts[0].cy));
@@ -161,6 +168,7 @@ function generateWorld(opts = {}) {
     if (x1 - x0 < 2 || y1 - y0 < 2) return;
     const id = nextBid++ % 65535 + 1;
     const h = pickHeight(type, (x0 + x1) / 2, (y0 + y1) / 2);
+    buildings.push({ id, x0, y0, x1, y1, h, type });
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
         const t = idx(x, y);
@@ -251,6 +259,91 @@ function generateWorld(opts = {}) {
     if (b.h > 0) landmarks.push({ name: namer.landmark(), x: b.x + 0.5, y: b.y + 0.5, height: b.h, district: i });
   });
 
+  /* ---- stores and public buildings ----
+   * Assigned with hash2 only (never the main random stream), so existing layouts do not change.
+   * A store needs a face looking onto a sidewalk, road or plaza; that face carries the storefront and sign. */
+  const stores = [];
+  const shops = new Map(); // anchor tile index -> store record
+  const OPEN = (k) => k === K.SIDEWALK || k === K.ROAD || k === K.PLAZA;
+  const S = STORE;
+  const MIX = { // probability a building is a store, and what kind
+    [D.DOWNTOWN]:   { p: 0.30, w: [[S.BANK, 0.2], [S.HOTEL, 0.15], [S.DINER, 0.25], [S.PHARMACY, 0.15], [S.GROCERY, 0.15], [S.LIBRARY, 0.1]] },
+    [D.COMMERCIAL]: { p: 0.45, w: [[S.GROCERY, 0.25], [S.PHARMACY, 0.15], [S.DINER, 0.2], [S.BANK, 0.1], [S.HARDWARE, 0.15], [S.HOTEL, 0.05], [S.LIBRARY, 0.1]] },
+    [D.RESIDENTIAL]:{ p: 0.12, w: [[S.GROCERY, 0.3], [S.DINER, 0.2], [S.SCHOOL, 0.15], [S.CHURCH, 0.15], [S.LIBRARY, 0.1], [S.FIREHALL, 0.1]] },
+    [D.INDUSTRIAL]: { p: 0.15, w: [[S.HARDWARE, 0.6], [S.FIREHALL, 0.2], [S.DINER, 0.2]] },
+    [D.PARKLAND]:   { p: 0.05, w: [[S.LIBRARY, 0.5], [S.CHURCH, 0.5]] },
+  };
+  const LOW = { [S.GROCERY]: 2, [S.DINER]: 2, [S.PHARMACY]: 3, [S.BANK]: 4, [S.HARDWARE]: 2, [S.LIBRARY]: 4, [S.SCHOOL]: 3, [S.FIREHALL]: 3, [S.CHURCH]: 3 };
+  const WORDS = ['Harbor', 'Maple', 'Union', 'Orbit', 'Cedar', 'Lantern', 'Copper', 'Juniper', 'Beacon', 'Willow', 'Atlas', 'Ember', 'Vista', 'Quartz', 'Meridian', 'Fable'];
+  const sh = (a, b, salt) => hash2(a, b, (seedValue ^ salt) | 0) / 4294967296;
+
+  function bestFace(b) { // the building edge with the most open neighbours, and the tile in the middle of it
+    const xm = (b.x0 + b.x1 - 1) >> 1, ym = (b.y0 + b.y1 - 1) >> 1;
+    const cand = [];
+    let c = 0;
+    for (let x = b.x0; x < b.x1; x++) if (OPEN(kind[idx(x, b.y1)])) c++;
+    cand.push({ face: FACE.S, count: c, len: b.x1 - b.x0, x: xm, y: b.y1 - 1 });
+    c = 0; for (let x = b.x0; x < b.x1; x++) if (OPEN(kind[idx(x, b.y0 - 1)])) c++;
+    cand.push({ face: FACE.N, count: c, len: b.x1 - b.x0, x: xm, y: b.y0 });
+    c = 0; for (let y = b.y0; y < b.y1; y++) if (OPEN(kind[idx(b.x1, y)])) c++;
+    cand.push({ face: FACE.E, count: c, len: b.y1 - b.y0, x: b.x1 - 1, y: ym });
+    c = 0; for (let y = b.y0; y < b.y1; y++) if (OPEN(kind[idx(b.x0 - 1, y)])) c++;
+    cand.push({ face: FACE.W, count: c, len: b.y1 - b.y0, x: b.x0, y: ym });
+    cand.sort((p, q) => q.count - p.count || sh(b.id, p.face, 0x5a) - sh(b.id, q.face, 0x5a));
+    const e = cand[0];
+    if (e.count < 2 || e.count * 2 < e.len) return null;
+    const t = idx(e.x, e.y);
+    return kind[t] === K.BUILDING && bid[t] === b.id ? e : null;
+  }
+
+  function makeStore(b, k, e) {
+    const word = WORDS[Math.floor(sh(b.id, k, 0x6b) * WORDS.length)];
+    const label = STORE_SIGN[k][0] + STORE_SIGN[k].slice(1).toLowerCase();
+    if (b.type !== D.DOWNTOWN) { // downtown shops stay as the ground floor of their tower
+      const nh = k === S.HOTEL ? Math.max(b.h, 6) : (LOW[k] || b.h);
+      for (let y = b.y0; y < b.y1; y++) for (let x = b.x0; x < b.x1; x++) if (bid[idx(x, y)] === b.id) height[idx(x, y)] = nh;
+      b.h = nh;
+    }
+    const rec = { id: b.id, kind: k, sign: STORE_SIGN[k], name: word + ' ' + label, x: mod(e.x) + 0.5, y: mod(e.y) + 0.5, face: e.face,
+                  x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, height: b.h, district: district[idx(e.x, e.y)] };
+    stores.push(rec);
+    shops.set(idx(e.x, e.y), rec);
+    b.store = rec;
+  }
+
+  for (const b of buildings) { // random assignment
+    const mix = MIX[b.type];
+    if (!mix || sh(b.id, 1, 0x4d) >= mix.p) continue;
+    const e = bestFace(b);
+    if (!e) continue;
+    let r = sh(b.id, 2, 0x4e) * mix.w.reduce((a, q) => a + q[1], 0), k = mix.w[mix.w.length - 1][0];
+    for (const [kk, wt] of mix.w) { if (r < wt) { k = kk; break; } r -= wt; }
+    makeStore(b, k, e);
+  }
+  /* guarantee some variety: every city gets at least a few of each public building */
+  const ENSURE = [[S.LIBRARY, [D.COMMERCIAL, D.RESIDENTIAL], 3, 12], [S.SCHOOL, [D.RESIDENTIAL], 3, 12], [S.FIREHALL, [D.COMMERCIAL, D.RESIDENTIAL, D.INDUSTRIAL], 3, 10],
+                  [S.CHURCH, [D.RESIDENTIAL, D.COMMERCIAL], 3, 10], [S.GROCERY, [D.RESIDENTIAL, D.COMMERCIAL], 6, 6]];
+  for (const [k, types, min, minArea] of ENSURE) {
+    let have = stores.filter((s) => s.kind === k).length;
+    const pool = buildings.filter((b) => !b.store && types.includes(b.type) && (b.x1 - b.x0) * (b.y1 - b.y0) >= minArea)
+      .sort((p, q) => sh(p.id, k, 0x7c) - sh(q.id, k, 0x7c));
+    for (const b of pool) {
+      if (have >= min) break;
+      const e = bestFace(b);
+      if (!e) continue;
+      makeStore(b, k, e);
+      have++;
+    }
+  }
+
+  /* keep the sidewalk in front of every storefront clear, so signs and doors stay visible */
+  const frontage = new Set();
+  for (const s of stores) {
+    const [fx, fy] = { [FACE.N]: [0, -1], [FACE.S]: [0, 1], [FACE.W]: [-1, 0], [FACE.E]: [1, 0] }[s.face];
+    const ax = Math.floor(s.x), ay = Math.floor(s.y);
+    for (let k = -1; k <= 1; k++) frontage.add(idx(ax + fx + (fx === 0 ? k : 0), ay + fy + (fy === 0 ? k : 0)));
+  }
+
   /* ---- street furniture: uses hash2 only, so it never disturbs the generator's random stream ---- */
   const deco = new Uint8Array(size * size);
   const glow = new Uint8Array(size * size);
@@ -289,6 +382,7 @@ function generateWorld(opts = {}) {
       if (k === K.PARK) {
         if (h01(x, y, 0x7ee) < 0.16) props.push({ x: x + 0.2 + 0.6 * h01(x, y, 0x11), y: y + 0.2 + 0.6 * h01(x, y, 0x22), type: PROP.TREE, v: 0 });
       } else if (k === K.SIDEWALK) {
+        if (frontage.has(idx(x, y))) continue;
         const rw = isRoad(x - 1, y), re = isRoad(x + 1, y), rn = isRoad(x, y - 1), rs = isRoad(x, y + 1);
         const horiz = rw || re, vert = rn || rs;
         if (horiz === vert) continue; // not beside a road, or a corner tile
@@ -329,6 +423,9 @@ function generateWorld(opts = {}) {
     if (hh >= 5 && hh <= 18 && h01(x, y, 0x77) < 0.012) props.push({ x: x + 0.5, y: y + 0.5, type: PROP.TANK, v: hh });
     else if (hh >= 22 && h01(x, y, 0x78) < 0.05) props.push({ x: x + 0.5, y: y + 0.5, type: PROP.ANTENNA, v: hh });
   }
+  for (const s of stores) if (s.kind === STORE.CHURCH) { // a steeple on every church
+    props.push({ x: mod((s.x0 + s.x1) / 2), y: mod((s.y0 + s.y1) / 2), type: PROP.STEEPLE, v: s.height });
+  }
   for (const p of props) {
     if (p.type !== PROP.LAMP) continue;
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
@@ -348,7 +445,7 @@ function generateWorld(opts = {}) {
   }
 
   return {
-    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, propGrid,
+    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, propGrid, stores, shops,
     districts, vRoads, hRoads, spawn, landmarks,
   };
 }
@@ -452,11 +549,12 @@ function worldHash(world) {
   let h = 2166136261 >>> 0;
   const feed = (arr) => { for (let i = 0; i < arr.length; i++) { h ^= arr[i] & 0xff; h = Math.imul(h, 16777619) >>> 0; } };
   feed(world.kind); feed(world.height); feed(world.district); feed(world.mark); feed(world.deco); feed(world.glow);
-  h ^= world.props.length ^ (world.wires.length << 12); h = Math.imul(h, 16777619) >>> 0;
+  h ^= world.props.length ^ (world.wires.length << 12);
+  for (const s of world.stores) { h ^= s.kind * 31 + (s.face << 8) + Math.floor(s.x) * 7; h = Math.imul(h, 16777619) >>> 0; } h = Math.imul(h, 16777619) >>> 0;
   return h >>> 0;
 }
 
 module.exports = {
   K, D, DISTRICT_TYPE_NAMES, ROAD_MARK, EDGE_HEIGHT, PROP, DECO,
-  generateWorld, inBounds, heightAt, kindAt, isWalkable, locate, worldHash, propClearance, PROP_RADIUS, wrapCoord, wrapDelta,
+  generateWorld, inBounds, heightAt, kindAt, isWalkable, locate, worldHash, propClearance, PROP_RADIUS, wrapCoord, wrapDelta, STORE, STORE_SIGN, FACE,
 };

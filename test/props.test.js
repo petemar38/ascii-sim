@@ -11,7 +11,7 @@ test('crosswalks only on road tiles', () => {
 });
 test('props exist, are inside the map and never inside buildings', () => {
   const types = new Set();
-  const roof = [C.PROP.TANK, C.PROP.ANTENNA];
+  const roof = [C.PROP.TANK, C.PROP.ANTENNA, C.PROP.STEEPLE];
   for (const p of w.props) {
     types.add(p.type);
     assert.ok(C.inBounds(w, p.x, p.y));

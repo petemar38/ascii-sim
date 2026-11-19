@@ -24,6 +24,14 @@ The first world is a procedural city you can walk through: a CPU raycaster draws
     bin/play.js     terminal player
     web/template.html + tools/bundle.js   browser front end
 
+## Stores and public buildings
+
+`world.stores` lists shops and public buildings (grocery, library, pharmacy, diner, bank, hotel, school,
+firehall, church, hardware) with a name, sign text, position and which way the storefront faces. Each gets a
+ground-floor storefront on the face looking onto the street: a door, display windows (lit at night), a striped
+awning, a sign you can read from a few tiles away, columns on libraries, and a steeple on churches. Stores are
+assigned with `hash2` only, so adding or tuning them never changes the road layout.
+
 ## The world wraps
 
 The map is a torus: walk off one edge and you arrive on the opposite one, and you can see straight

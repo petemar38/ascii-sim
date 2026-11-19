@@ -12,10 +12,11 @@
  */
 
 const { hash2 } = require('./rng');
-const { K, ROAD_MARK, EDGE_HEIGHT, PROP, DECO } = require('./world');
+const { K, ROAD_MARK, EDGE_HEIGHT, PROP, DECO, STORE } = require('./world');
 
 const FLOOR_H = 0.4; // one floor, in tiles (a tile is ~8 m, so ~3.2 m per floor)
 const WINDOWS_PER_TILE = 3;
+const AWNING = new Set([STORE.GROCERY, STORE.DINER, STORE.PHARMACY, STORE.HARDWARE, STORE.HOTEL, STORE.BANK]);
 
 const RAMP = ' .:-=+*#%@';
 const RAMP_LAST = RAMP.length - 1;
@@ -25,7 +26,7 @@ const RAMP_CODES = Array.from(RAMP, (c) => c.charCodeAt(0));
 const TONE = {
   SKY: 0, STAR: 1, ROAD: 2, MARKING: 3, SIDEWALK: 4, PARK: 5, PLAZA: 6,
   WALL: 7, WINDOW_LIT: 8, WINDOW_DARK: 9, EDGE: 10, VOID: 11,
-  LAMP: 12, LAMP_LIT: 13, TRUNK: 14, LEAF: 15, SIGNAL_RED: 16, SIGNAL_GREEN: 17, CROSSWALK: 18, CURB: 19, MANHOLE: 20, FIRE_ESCAPE: 21, HYDRANT: 22, TANK: 23, WIRE: 24,
+  LAMP: 12, LAMP_LIT: 13, TRUNK: 14, LEAF: 15, SIGNAL_RED: 16, SIGNAL_GREEN: 17, CROSSWALK: 18, CURB: 19, MANHOLE: 20, FIRE_ESCAPE: 21, HYDRANT: 22, TANK: 23, WIRE: 24, DOOR: 25, SIGN: 26, AWNING: 27, COLUMN: 28,
 };
 
 function createFrame(cols, rows) {
@@ -246,7 +247,19 @@ function render(frame, world, cam, opts = {}) {
         const colsPerTile = focalX / perp;
         const fineV = rowsPerFloor >= 1.7, fineH = colsPerTile >= 7;
         /* fire escape on some facades: platforms every floor, rails at the sides, a diagonal stair */
-        const escOn = !oob && fineV && f > 0.2 && h >= 4 && h <= 18 && hash2(wx0 * 5 + side, wy0 * 3, seed ^ 0xfe) / 4294967296 < 0.06;
+        const shop = !oob && world.shops ? world.shops.get(t) : undefined;
+        const escOn = !shop && !oob && fineV && f > 0.2 && h >= 4 && h <= 18 && hash2(wx0 * 5 + side, wy0 * 3, seed ^ 0xfe) / 4294967296 < 0.06;
+
+        /* storefront: only on the one face of a shop building that looks onto the street */
+        const hitFace = side === 0 ? (stepX > 0 ? 3 : 4) : (stepY > 0 ? 1 : 2); // which face of the tile this ray hit (matches world FACE)
+        const storefront = shop !== undefined && shop.face === hitFace && fineV && f > 0.22;
+        const flip = hitFace === 1 || hitFace === 4; // read signs left to right as seen from the street
+        const uu = flip ? 1 - wx : wx;
+        const signLen = storefront ? shop.sign.length : 0;
+        const signOn = storefront && colsPerTile >= 12 && rowsPerFloor >= 2.5;
+        const signX0 = 0.5 - signLen * 0.05;
+        const rowVf = 1 / rowsPerFloor;
+        const cpc = colsPerTile * 0.1; // columns per sign letter
 
         for (let r = rs; r < re; r++) {
           const z = eyeZ + (hz - (r + 0.5)) * perpOverFocal;
@@ -261,7 +274,8 @@ function render(frame, world, cam, opts = {}) {
           } else {
             const inV = fineV ? (vf > 0.22 && vf < 0.78) : (vf > 0.12 && vf < 0.88);
             const inH = fineH ? (wf > 0.2 && wf < 0.8) : true;
-            const isWin = fl >= 0 && inV && inH;
+            const shopFloor = storefront && fl === 0;
+            const isWin = fl >= 0 && inV && inH && !shopFloor;
             if (isWin) {
               const occupied = hash2(bId, 7, seed) / 4294967296 < 0.9;
               const lit = occupied && hash2(bId * 31 + wi + (side ? 17 : 0), fl, seed) / 4294967296 < night * 0.6 + 0.04;
@@ -280,6 +294,23 @@ function render(frame, world, cam, opts = {}) {
               b = wallBase * (fineV && vf < 0.06 ? 0.82 : 1) * f + haze * (1 - f);
               tn = TONE.WALL;
               if (r === rs && topRow >= 0) b += 0.10 * f; // roof edge catches light
+            }
+          }
+          if (storefront && fl === 0) {
+            const u = uu;
+            const inDoor = u > 0.43 && u < 0.57 && vf < 0.52;
+            if (signOn && vf > 0.7 && Math.abs(vf - 0.82) <= rowVf * 0.5 && u >= signX0 && u < signX0 + signLen * 0.1) {
+              const s = (u - signX0) / 0.1, ci = Math.floor(s);
+              if (Math.abs(s - ci - 0.5) <= 0.55 / cpc) { sp = shop.sign.charCodeAt(ci); tn = TONE.SIGN; }
+            } else if (inDoor) {
+              sp = (u < 0.45 || u > 0.55) ? 124 : 32; tn = TONE.DOOR;
+            } else if (shop.kind === STORE.LIBRARY && vf < 0.92 && (Math.abs(u - 0.12) < 0.03 || Math.abs(u - 0.32) < 0.03 || Math.abs(u - 0.68) < 0.03 || Math.abs(u - 0.88) < 0.03)) {
+              sp = 124; tn = TONE.COLUMN; // portico columns
+            } else if (AWNING.has(shop.kind) && vf >= 0.54 && vf < 0.68) {
+              sp = (Math.floor(u * 16) & 1) ? 35 : 61; tn = TONE.AWNING; // striped awning
+            } else if (vf > 0.1 && vf < 0.5 && ((u > 0.08 && u < 0.4) || (u > 0.6 && u < 0.92))) { // shop windows, lit at night
+              if (night > 0.2) { const fw = Math.pow(f, 0.45); b = (0.55 + 0.4 * night) * fw + haze * (1 - fw); tn = TONE.WINDOW_LIT; }
+              else { b = wallBase * 0.4 * f + haze * (1 - f); tn = TONE.WINDOW_DARK; }
             }
           }
           if (escOn && fl >= 1 && fl < h) {
@@ -427,6 +458,11 @@ function drawProps(frame, world, cam, g) {
       box(frame, g, sx, 0.2, z0, z0 + 0.1, dep, 124, TONE.TANK, 1);        // legs
       box(frame, g, sx, 0.3, z0 + 0.1, z0 + 0.3, dep, 35, TONE.TANK, 1);   // tank '#'
       box(frame, g, sx, 0.14, z0 + 0.3, z0 + 0.36, dep, 94, TONE.TANK, 1); // roof '^'
+    } else if (p.type === PROP.STEEPLE) {
+      const z0 = p.v * FLOOR_H;
+      box(frame, g, sx, 0.2, z0, z0 + 0.3, dep, 72, TONE.TANK, 1);          // tower 'H'
+      box(frame, g, sx, 0.1, z0 + 0.3, z0 + 0.52, dep, 94, TONE.TANK, 1);   // spire '^'
+      box(frame, g, sx, 0.03, z0 + 0.5, z0 + 0.6, dep, 43, TONE.TANK, 1);   // cross '+'
     } else if (p.type === PROP.ANTENNA) {
       const z0 = p.v * FLOOR_H;
       box(frame, g, sx, 0.03, z0, z0 + 0.6, dep, 124, TONE.LAMP, 1);
