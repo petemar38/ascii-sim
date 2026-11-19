@@ -1,0 +1,14 @@
+{
+  "name": "ascii-sim",
+  "version": "0.1.0",
+  "description": "A game and simulation engine for rendering 3D environments in ASCII. Zero dependencies, CPU-only.",
+  "main": "src/index.js",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "test:update-golden": "UPDATE_GOLDEN=1 node --test test/golden.test.js",
+    "bench": "node bench/bench.js",
+    "play": "node bin/play.js",
+    "build:web": "node tools/bundle.js"
+  }
+}

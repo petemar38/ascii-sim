@@ -1,0 +1,480 @@
+'use strict';
+/**
+ * Raycasting renderer with per-tile building heights.
+ *
+ * For every screen column a DDA walks the tile grid front to back. A tile only produces a
+ * visible face if it is taller than everything already passed (a farther tile that is not
+ * taller projects entirely below a nearer one), and each face is clipped against the
+ * highest row already covered. That is what gives you a skyline instead of equal-height walls.
+ *
+ * Output is a Frame of ASCII char codes plus a parallel `tone` plane (material ids), so a
+ * later color pass can tint without re-rendering. No I/O in this file.
+ */
+
+const { hash2 } = require('./rng');
+const { K, ROAD_MARK, EDGE_HEIGHT, PROP, DECO } = require('./world');
+
+const FLOOR_H = 0.4; // one floor, in tiles (a tile is ~8 m, so ~3.2 m per floor)
+const WINDOWS_PER_TILE = 3;
+
+const RAMP = ' .:-=+*#%@';
+const RAMP_LAST = RAMP.length - 1;
+const RAMP_CODES = Array.from(RAMP, (c) => c.charCodeAt(0));
+
+/** Material ids written to Frame.tone. */
+const TONE = {
+  SKY: 0, STAR: 1, ROAD: 2, MARKING: 3, SIDEWALK: 4, PARK: 5, PLAZA: 6,
+  WALL: 7, WINDOW_LIT: 8, WINDOW_DARK: 9, EDGE: 10, VOID: 11,
+  LAMP: 12, LAMP_LIT: 13, TRUNK: 14, LEAF: 15, SIGNAL_RED: 16, SIGNAL_GREEN: 17, CROSSWALK: 18, CURB: 19, MANHOLE: 20, FIRE_ESCAPE: 21, HYDRANT: 22, TANK: 23, WIRE: 24,
+};
+
+function createFrame(cols, rows) {
+  return {
+    cols, rows,
+    ch: new Uint8Array(cols * rows),
+    tone: new Uint8Array(cols * rows),
+    id: new Uint32Array(cols * rows), // wall face id per cell (0 = not a near wall); drives the edge pass
+    z: new Float32Array(cols * rows), // distance to whatever each cell shows (sprites test against it)
+    depth: new Float32Array(cols), // distance to the first wall per column (hook for sprites)
+  };
+}
+
+function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+/* a mild gamma lifts dark tones so night scenes keep readable structure */
+function rampCode(b) { return RAMP_CODES[Math.round(Math.pow(clamp01(b), 0.72) * RAMP_LAST)]; }
+
+/* Sparse filler: low brightness fades to blank space with a scatter of dots (4x4 ordered dither),
+ * instead of a solid wash of '.' ':' '-'. opts.filler = 'solid' restores the old look. */
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+function sparseCode(b, x, r) {
+  const v = clamp01(b) * 1.6;
+  if (v < 0.10) return 32;
+  if (v >= 0.55) return rampCode(b);
+  return (BAYER[(r & 3) * 4 + (x & 3)] / 16) < ((v - 0.10) / 0.45) * 0.85 ? 46 : 32;
+}
+
+/** Day/night from the hour (0-24). day: 1 at noon, 0 at night. */
+function lighting(time) {
+  const sun = Math.sin(((time - 6) / 12) * Math.PI);
+  const day = clamp01(sun * 2.2 + 0.35);
+  return { day, night: 1 - day, ambient: 0.2 + 0.8 * day };
+}
+
+/**
+ * Render the world from a camera into a frame (the frame is overwritten in full).
+ *
+ * @param {object} frame      from createFrame(cols, rows)
+ * @param {object} world      from generateWorld()
+ * @param {{x:number,y:number,angle:number,pitch:number,eyeZ:number}} cam
+ * @param {{fov?:number, viewDist?:number, cellAspect?:number, time?:number}} [opts]
+ *   cellAspect = glyph cell height / width (about 2 for typical monospace fonts)
+ */
+function render(frame, world, cam, opts = {}) {
+  const { cols, rows, ch, tone, depth, id, z: zbuf } = frame;
+  const fov = opts.fov || 1.15;
+  const viewDist = opts.viewDist || 56;
+  const cellAspect = opts.cellAspect || 2;
+  const time = opts.time === undefined ? 21 : opts.time;
+  const sparse = opts.filler !== 'solid';
+  const light = lighting(time);
+  const { ambient, night } = light;
+  const size = world.size;
+  const seed = world.seed | 0;
+
+  const tanHalf = Math.tan(fov / 2);
+  const focalX = cols / 2 / tanHalf; // in cell widths
+  const focalY = focalX / cellAspect; // in rows per (dz / distance)
+  const hz = rows * (opts.horizon === undefined ? 0.56 : opts.horizon) + cam.pitch * rows; // horizon row (float)
+  const eyeZ = cam.eyeZ;
+  const dirX = Math.cos(cam.angle), dirY = Math.sin(cam.angle);
+  const planeX = -dirY, planeY = dirX;
+
+  /* brightness of distant haze, shared by sky horizon and fog */
+  const haze = sparse ? 0.08 + 0.12 * light.day : 0.10 + 0.24 * light.day;
+  const skyTop = 0.0 + 0.08 * light.day;
+  const dayScale = 0.30 + 0.70 * ambient;
+
+  /* per-row ground distance, fog and sky brightness */
+  const rowDist = new Float32Array(rows);
+  const rowFog = new Float32Array(rows);
+  const rowSky = new Float32Array(rows);
+  for (let r = 0; r < rows; r++) {
+    const off = r + 0.5 - hz;
+    if (off > 0) {
+      const d = (eyeZ * focalY) / off;
+      rowDist[r] = d;
+      rowFog[r] = fog(d, viewDist);
+    } else {
+      const t = clamp01((hz - (r + 0.5)) / Math.max(1, hz));
+      rowSky[r] = haze + (skyTop - haze) * Math.pow(t, 0.7);
+    }
+  }
+
+  const maxSteps = Math.ceil(viewDist * 2) + 4;
+
+  for (let x = 0; x < cols; x++) {
+    const camX = ((2 * (x + 0.5)) / cols - 1) * tanHalf;
+    const rdx = dirX + planeX * camX;
+    const rdy = dirY + planeY * camX;
+
+    /* ---- sky and ground ---- */
+    const ang = cam.angle + Math.atan(camX);
+    const starBucket = Math.floor(ang * 100);
+    const horizonRow = Math.floor(hz);
+    for (let r = 0; r < rows; r++) {
+      const i = r * cols + x;
+      if (r + 0.5 < hz) {
+        let b = rowSky[r];
+        let code = sparse ? sparseCode(b, x, r) : rampCode(b);
+        let tn = TONE.SKY;
+        if (night > 0.15) {
+          const hv = hash2(starBucket, r - horizonRow, seed ^ 0x51ed);
+          if ((hv & 0x3ff) < 14 * night) { code = (hv & 0x400) ? 42 : 46; tn = TONE.STAR; } // '*' or '.'
+        }
+        ch[i] = code; tone[i] = tn; id[i] = 0; zbuf[i] = 1e9;
+      } else {
+        const d = rowDist[r];
+        const px = cam.x + rdx * d, py = cam.y + rdy * d;
+        const tx = Math.floor(px), ty = Math.floor(py);
+        id[i] = 0; zbuf[i] = d;
+        if (tx < 0 || ty < 0 || tx >= size || ty >= size) { ch[i] = 32; tone[i] = TONE.VOID; continue; }
+        const t = ty * size + tx;
+        const fx = px - tx, fy = py - ty;
+        let b, tn, parkHash = -1;
+        switch (world.kind[t]) {
+          case K.ROAD: {
+            b = 0.20 + 0.03 * (hash2(Math.floor(px * 3), Math.floor(py * 3), seed) / 4294967296); tn = TONE.ROAD; // asphalt, kept dark so paint and curbs read
+            const m = world.mark[t];
+            const dc = world.deco[t];
+            if (dc >= 1 && dc <= 4 && d < 26) {
+              let bar, span;
+              if (dc === DECO.CROSS_N) { span = fy > 0.35 && fy < 0.9; bar = (Math.floor(px * 2.5) & 1) === 0; }
+              else if (dc === DECO.CROSS_S) { span = fy < 0.65 && fy > 0.1; bar = (Math.floor(px * 2.5) & 1) === 0; }
+              else if (dc === DECO.CROSS_W) { span = fx > 0.35 && fx < 0.9; bar = (Math.floor(py * 2.5) & 1) === 0; }
+              else { span = fx < 0.65 && fx > 0.1; bar = (Math.floor(py * 2.5) & 1) === 0; }
+              if (span && bar) { b = 0.9; tn = TONE.CROSSWALK; }
+            } else if (m !== 0 && d < 22) {
+              let on = false;
+              if (m === ROAD_MARK.V_CENTER) on = Math.abs(fx - 0.5) < 0.07 && (Math.floor(py * 3) & 1) === 0;
+              else if (m === ROAD_MARK.V_LEFT) on = fx < 0.06 && (Math.floor(py * 3) & 1) === 0;
+              else if (m === ROAD_MARK.V_RIGHT) on = fx > 0.94 && (Math.floor(py * 3) & 1) === 0;
+              else if (m === ROAD_MARK.H_CENTER) on = Math.abs(fy - 0.5) < 0.07 && (Math.floor(px * 3) & 1) === 0;
+              else if (m === ROAD_MARK.H_TOP) on = fy < 0.06 && (Math.floor(px * 3) & 1) === 0;
+              else if (m === ROAD_MARK.H_BOTTOM) on = fy > 0.94 && (Math.floor(px * 3) & 1) === 0;
+              if (on) { b = 0.85; tn = TONE.MARKING; }
+            }
+            if (dc === DECO.MANHOLE && d < 26) { // round cover
+              const mx = fx - 0.5, my = fy - 0.5;
+              if (mx * mx + my * my < 0.0144) { b = 0.7; tn = TONE.MANHOLE; }
+            }
+            break;
+          }
+          case K.SIDEWALK:
+            b = 0.50 - ((fx % 0.5) < 0.07 || (fy % 0.5) < 0.07 ? 0.16 : 0); tn = TONE.SIDEWALK; // paving joints
+            if (d < 34) { // curb: a bright lip on the side facing the road, so blocks read apart from streets
+              const k = world.kind;
+              if ((fx < 0.14 && tx > 0 && k[t - 1] === K.ROAD) || (fx > 0.86 && tx < size - 1 && k[t + 1] === K.ROAD) ||
+                  (fy < 0.14 && ty > 0 && k[t - size] === K.ROAD) || (fy > 0.86 && ty < size - 1 && k[t + size] === K.ROAD)) { b = 0.86; tn = TONE.CURB; }
+            }
+            break;
+          case K.PARK:
+            b = 0.30 + 0.16 * (hash2(Math.floor(px * 3), Math.floor(py * 3), seed) / 4294967296); tn = TONE.PARK; parkHash = hash2(Math.floor(px * 3), Math.floor(py * 3), seed ^ 77); break;
+          case K.PLAZA:
+            b = ((Math.floor(px * 2) + Math.floor(py * 2)) & 1) ? 0.52 : 0.42; tn = TONE.PLAZA; break;
+          default:
+            b = 0.30; tn = TONE.ROAD;
+        }
+        const f = rowFog[r];
+        const gl = world.glow[t];
+        if (gl !== 0 && night > 0.15) b += (gl / 255) * 0.5 * night; // lamp light pooling on the ground
+        b = b * dayScale * f + haze * (1 - f);
+        if (tn === TONE.CROSSWALK) ch[i] = 35; // '#'
+        else if (tn === TONE.CURB) ch[i] = 95; // '_'
+        else if (tn === TONE.MANHOLE) ch[i] = 111; // 'o'
+        else if (tn === TONE.MARKING && d < 22) ch[i] = 61; // '=' for paint
+        else if (parkHash >= 0 && d < 24) { const q = parkHash & 7; ch[i] = q === 0 ? 34 : q === 1 ? 44 : q === 2 ? 39 : rampCode(b); } // grass: " , '
+        else ch[i] = (sparse && tn === TONE.ROAD) ? sparseCode(b, x, r) : rampCode(b);
+        tone[i] = tn;
+      }
+    }
+
+    /* ---- walls: DDA front to back ---- */
+    let mapX = Math.floor(cam.x), mapY = Math.floor(cam.y);
+    const ddx = rdx === 0 ? 1e30 : Math.abs(1 / rdx);
+    const ddy = rdy === 0 ? 1e30 : Math.abs(1 / rdy);
+    let stepX, stepY, sdx, sdy;
+    if (rdx < 0) { stepX = -1; sdx = (cam.x - mapX) * ddx; } else { stepX = 1; sdx = (mapX + 1 - cam.x) * ddx; }
+    if (rdy < 0) { stepY = -1; sdy = (cam.y - mapY) * ddy; } else { stepY = 1; sdy = (mapY + 1 - cam.y) * ddy; }
+
+    let maxH = 0, minY = rows, firstHit = viewDist;
+    for (let step = 0; step < maxSteps; step++) {
+      let perp, side;
+      if (sdx < sdy) { perp = sdx; sdx += ddx; mapX += stepX; side = 0; } else { perp = sdy; sdy += ddy; mapY += stepY; side = 1; }
+      if (perp > viewDist) break;
+      if (perp < 0.02) continue;
+
+      const oob = mapX < 0 || mapY < 0 || mapX >= size || mapY >= size;
+      const t = oob ? -1 : mapY * size + mapX;
+      const h = oob ? EDGE_HEIGHT : world.height[t];
+      if (h <= maxH) continue;
+      maxH = h;
+      if (perp < firstHit) firstHit = perp;
+
+      const topRow = hz - (h * FLOOR_H - eyeZ) * focalY / perp;
+      const botRow = hz + (eyeZ * focalY) / perp;
+      const rs = Math.max(0, Math.ceil(topRow - 0.5));
+      const re = Math.min(Math.ceil(botRow - 0.5), minY);
+
+      if (re > rs) {
+        const wallPos = side === 0 ? cam.y + perp * rdy : cam.x + perp * rdx;
+        const wx = wallPos - Math.floor(wallPos);
+        const bId = oob ? 0 : world.bid[t];
+        const sideShade = side === 0 ? 0.95 : 0.66;
+        const f = fog(perp, viewDist);
+        const wallBase = sideShade * (0.28 + 0.62 * ambient);
+        const winCell = wx * WINDOWS_PER_TILE;
+        const wi = Math.floor(winCell);
+        const wf = winCell - wi;
+        const perpOverFocal = perp / focalY;
+        /* level of detail: fine window panes only when each floor and window spans enough cells */
+        const rowsPerFloor = (FLOOR_H * focalY) / perp;
+        const colsPerTile = focalX / perp;
+        const fineV = rowsPerFloor >= 1.7, fineH = colsPerTile >= 7;
+        /* fire escape on some facades: platforms every floor, rails at the sides, a diagonal stair */
+        const escOn = !oob && fineV && f > 0.2 && h >= 4 && h <= 18 && hash2(mapX * 5 + side, mapY * 3, seed ^ 0xfe) / 4294967296 < 0.06;
+
+        for (let r = rs; r < re; r++) {
+          const z = eyeZ + (hz - (r + 0.5)) * perpOverFocal;
+          const fz = z / FLOOR_H;
+          const fl = Math.floor(fz);
+          const vf = fz - fl;
+          let b, tn, sp = 0;
+          if (oob) {
+            b = (wallBase * 0.8) * f + haze * (1 - f);
+            b *= (wx < 0.12 || wx > 0.88) ? 0.6 : 1;
+            tn = TONE.EDGE;
+          } else {
+            const inV = fineV ? (vf > 0.22 && vf < 0.78) : (vf > 0.12 && vf < 0.88);
+            const inH = fineH ? (wf > 0.2 && wf < 0.8) : true;
+            const isWin = fl >= 0 && inV && inH;
+            if (isWin) {
+              const occupied = hash2(bId, 7, seed) / 4294967296 < 0.9;
+              const lit = occupied && hash2(bId * 31 + wi + (side ? 17 : 0), fl, seed) / 4294967296 < night * 0.6 + 0.04;
+              if (lit && night > 0.2) {
+                const fw = Math.pow(f, 0.45); // lights stay visible farther than walls
+                b = (0.55 + 0.45 * night) * fw + haze * (1 - fw);
+                tn = TONE.WINDOW_LIT;
+              } else if (fineV && fineH) {
+                b = wallBase * 0.45 * f + haze * (1 - f);
+                tn = TONE.WINDOW_DARK;
+              } else {
+                b = wallBase * f + haze * (1 - f);
+                tn = TONE.WALL;
+              }
+            } else {
+              b = wallBase * (fineV && vf < 0.06 ? 0.82 : 1) * f + haze * (1 - f);
+              tn = TONE.WALL;
+              if (r === rs && topRow >= 0) b += 0.10 * f; // roof edge catches light
+            }
+          }
+          if (escOn && fl >= 1 && fl < h) {
+            const plat = vf < 0.14 && wx > 0.2 && wx < 0.8;
+            const rail = (wx > 0.2 && wx < 0.26) || (wx > 0.74 && wx < 0.8);
+            const tgt = (fl & 1) ? 0.3 + 0.4 * (1 - vf) : 0.3 + 0.4 * vf; // stair runs corner to corner
+            if (plat) { sp = 61; tn = TONE.FIRE_ESCAPE; }
+            else if (rail) { sp = 124; tn = TONE.FIRE_ESCAPE; }
+            else if (fineH && Math.abs(wx - tgt) < 0.05) { sp = (fl & 1) ? 92 : 47; tn = TONE.FIRE_ESCAPE; }
+          }
+          const i = r * cols + x;
+          ch[i] = sp || rampCode(b); tone[i] = tn;
+          id[i] = (oob || perp > viewDist * 0.7) ? 0 : ((bId << 1) | side) + 1;
+          zbuf[i] = perp;
+        }
+      }
+      if (rs < minY) minY = rs;
+      if (minY <= 0) break;
+    }
+    depth[x] = firstHit;
+  }
+  edgePass(frame);
+  if (world.props && world.props.length) {
+    drawProps(frame, world, cam, { hz, focalX, focalY, tanHalf, dirX, dirY, planeX, planeY, eyeZ, viewDist, light, haze, seed });
+  }
+  return frame;
+}
+
+/**
+ * Silhouette pass: draws '|' where a near building face starts next to something different
+ * (another face, sky or ground) and '_' along roof lines, so shapes read at a glance.
+ */
+function edgePass(frame) {
+  const { cols, rows, ch, id, tone } = frame;
+  for (let r = 0; r < rows; r++) {
+    const row = r * cols;
+    for (let x = cols - 1; x >= 0; x--) {
+      const i = row + x, v = id[i];
+      if (v === 0) continue;
+      if (x > 0 && id[i - 1] !== v && tone[i] !== TONE.WINDOW_LIT) { ch[i] = 124; continue; } // '|'
+      if (r > 0 && id[i - cols] === 0 && tone[i - cols] === TONE.SKY) ch[i] = 95;            // '_'
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ props (sprites) */
+
+/** Fill a vertical box (centre column sx, width wT tiles, z0..z1 in tiles) at distance dep. Cells already nearer win. */
+function box(frame, g, sx, wT, z0, z1, dep, glyph, toneId, minRows) {
+  const { cols, rows, ch, tone, id, z } = frame;
+  const wc = Math.max(1, Math.round((wT * g.focalX) / dep));
+  const c0 = Math.round(sx - wc / 2 - 0.0001), c1 = c0 + wc;
+  const top = g.hz - ((z1 - g.eyeZ) * g.focalY) / dep;
+  const bot = g.hz + ((g.eyeZ - z0) * g.focalY) / dep;
+  let r0 = Math.ceil(top - 0.5), r1 = Math.ceil(bot - 0.5);
+  if (r1 - r0 < minRows) r1 = r0 + minRows;
+  if (r0 < 0) r0 = 0;
+  if (r1 > rows) r1 = rows;
+  for (let x = c0; x < c1; x++) {
+    if (x < 0 || x >= cols) continue;
+    for (let r = r0; r < r1; r++) {
+      const i = r * cols + x;
+      if (dep < z[i]) { ch[i] = glyph; tone[i] = toneId; id[i] = 0; z[i] = dep; }
+    }
+  }
+}
+
+/** Utility lines: two sagging conductors per span, sampled in 3D, projected, joined cell to cell. */
+function drawWires(frame, world, cam, g) {
+  const wires = world.wires;
+  if (!wires || !wires.length) return;
+  const { cols, rows, ch, tone, id, z } = frame;
+  for (const w of wires) {
+    const mx = (w.x0 + w.x1) / 2, my = (w.y0 + w.y1) / 2;
+    if (Math.hypot(mx - cam.x, my - cam.y) > g.viewDist * 0.75) continue;
+    const len = Math.hypot(w.x1 - w.x0, w.y1 - w.y0);
+    const nx = -(w.y1 - w.y0) / len, ny = (w.x1 - w.x0) / len; // sideways, for the two conductors
+    const n = Math.min(120, Math.ceil(len * 6));
+    for (let lane = 0; lane < 2; lane++) {
+      const off = lane ? 0.11 : -0.11, zb = lane ? 0.86 : 0.93;
+      let pc = 0, pr = 0, pd = 0, have = false;
+      for (let k = 0; k <= n; k++) {
+        const t = k / n;
+        const x = w.x0 + (w.x1 - w.x0) * t + nx * off, y = w.y0 + (w.y1 - w.y0) * t + ny * off;
+        const zz = zb - 0.1 * (len / 6) * 4 * t * (1 - t); // catenary-ish sag
+        const dx = x - cam.x, dy = y - cam.y;
+        const dep = dx * g.dirX + dy * g.dirY;
+        if (dep < 0.4) { have = false; continue; }
+        const camX = (dx * g.planeX + dy * g.planeY) / dep;
+        const c = Math.floor((camX / g.tanHalf + 1) * cols * 0.5);
+        const r = Math.floor(g.hz - ((zz - g.eyeZ) * g.focalY) / dep);
+        if (have) {
+          const dc = c - pc, dr = r - pr, steps = Math.max(Math.abs(dc), Math.abs(dr));
+          if (steps < cols) {
+            const slope = dc === 0 ? 99 : dr / dc;
+            const glyph = Math.abs(slope) > 2 ? 124 : Math.abs(slope) < 0.5 ? 45 : (slope > 0 ? 92 : 47);
+            for (let s = 0; s <= steps; s++) {
+              const u = steps ? s / steps : 0;
+              const cc = Math.round(pc + dc * u), rr = Math.round(pr + dr * u), dd = pd + (dep - pd) * u;
+              if (cc < 0 || cc >= cols || rr < 0 || rr >= rows) continue;
+              const i = rr * cols + cc;
+              if (dd < z[i]) { ch[i] = glyph; tone[i] = TONE.WIRE; id[i] = 0; z[i] = dd; }
+            }
+          }
+        }
+        pc = c; pr = r; pd = dep; have = true;
+      }
+    }
+  }
+}
+
+function drawProps(frame, world, cam, g) {
+  const { cols, rows, ch, tone, id, z } = frame;
+  const props = world.props;
+  const night = g.light.night, ambient = g.light.ambient;
+  const vis = [];
+  for (let n = 0; n < props.length; n++) {
+    const p = props[n];
+    const dx = p.x - cam.x, dy = p.y - cam.y;
+    const dep = dx * g.dirX + dy * g.dirY;
+    if (dep < 0.4 || dep > g.viewDist) continue;
+    const camX = (dx * g.planeX + dy * g.planeY) / dep;
+    if (camX > g.tanHalf * 1.2 || camX < -g.tanHalf * 1.2) continue;
+    vis.push({ p, dep, sx: (camX / g.tanHalf + 1) * cols * 0.5 });
+  }
+  vis.sort((a, b) => b.dep - a.dep); // far to near
+  drawWires(frame, world, cam, g);
+  const lampOn = night > 0.25;
+
+  for (const { p, dep, sx } of vis) {
+    const f = fog(dep, g.viewDist);
+    if (p.type === PROP.LAMP) {
+      if (f > 0.2) box(frame, g, sx, 0.05, 0, 0.6, dep, 124, TONE.LAMP, 1); // pole '|'
+      box(frame, g, sx, 0.16, 0.58, 0.68, dep, lampOn ? 64 : 111, lampOn ? TONE.LAMP_LIT : TONE.LAMP, 1); // head '@' lit / 'o'
+    } else if (p.type === PROP.SIGNAL) {
+      box(frame, g, sx, 0.04, 0, 0.5, dep, 124, TONE.LAMP, 1);
+      box(frame, g, sx, 0.11, 0.46, 0.62, dep, p.v ? 79 : 79, p.v ? TONE.SIGNAL_GREEN : TONE.SIGNAL_RED, 1); // head 'O'
+    } else if (p.type === PROP.HYDRANT) {
+      box(frame, g, sx, 0.07, 0, 0.1, dep, 105, TONE.HYDRANT, 1); // 'i'
+    } else if (p.type === PROP.POLE) {
+      if (f > 0.1) box(frame, g, sx, 0.05, 0, 1.0, dep, 124, TONE.LAMP, 1);
+      box(frame, g, sx, 0.34, 0.9, 0.94, dep, 61, TONE.LAMP, 1); // crossarm
+    } else if (p.type === PROP.TANK) {
+      const z0 = p.v * FLOOR_H;
+      box(frame, g, sx, 0.2, z0, z0 + 0.1, dep, 124, TONE.TANK, 1);        // legs
+      box(frame, g, sx, 0.3, z0 + 0.1, z0 + 0.3, dep, 35, TONE.TANK, 1);   // tank '#'
+      box(frame, g, sx, 0.14, z0 + 0.3, z0 + 0.36, dep, 94, TONE.TANK, 1); // roof '^'
+    } else if (p.type === PROP.ANTENNA) {
+      const z0 = p.v * FLOOR_H;
+      box(frame, g, sx, 0.03, z0, z0 + 0.6, dep, 124, TONE.LAMP, 1);
+      if (lampOn) box(frame, g, sx, 0.09, z0 + 0.58, z0 + 0.66, dep, 42, TONE.SIGNAL_RED, 1); // beacon '*'
+    } else if (p.type === PROP.TREE) {
+      const big = p.v === 0;
+      const trunkH = big ? 0.26 : 0.22, rad = big ? 0.3 : 0.2, cz = trunkH + rad * 0.8, ry = rad * 0.95;
+      box(frame, g, sx, 0.07, 0, trunkH + 0.04, dep, 124, TONE.TRUNK, 1);
+      /* canopy: an ellipse, cell by cell, with a little leaf texture */
+      const wc = Math.max(1, Math.round((rad * 2 * g.focalX) / dep));
+      const c0 = Math.round(sx - wc / 2);
+      const top = g.hz - ((cz + ry - g.eyeZ) * g.focalY) / dep;
+      const bot = g.hz - ((cz - ry - g.eyeZ) * g.focalY) / dep;
+      const r0 = Math.max(0, Math.ceil(top - 0.5)), r1 = Math.min(rows, Math.max(r0 + 1, Math.ceil(bot - 0.5)));
+      const hr = Math.max(0.5, (r1 - r0) / 2), hc = Math.max(0.5, wc / 2);
+      for (let x = c0; x < c0 + wc; x++) {
+        if (x < 0 || x >= cols) continue;
+        const ux = (x + 0.5 - (c0 + wc / 2)) / hc;
+        for (let r = r0; r < r1; r++) {
+          const uy = (r + 0.5 - (r0 + hr)) / hr;
+          if (ux * ux + uy * uy > 1.05) continue;
+          const i = r * cols + x;
+          if (dep >= z[i]) continue;
+          const tex = hash2(x * 7 + (r0 | 0), r, g.seed) / 4294967296;
+          const lit = 1 - 0.25 * (uy + 1) / 2; // top catches more light
+          const b = ((0.28 + 0.5 * ambient) * (0.75 + 0.5 * tex) * lit) * f + g.haze * (1 - f);
+          ch[i] = rampCode(b); tone[i] = TONE.LEAF; id[i] = 0; z[i] = dep;
+        }
+      }
+    }
+  }
+}
+
+function fog(d, viewDist) {
+  const t = 1 - d / viewDist;
+  return t <= 0 ? 0 : Math.pow(t, 1.3);
+}
+
+/** Frame -> array of row strings. */
+function frameRows(frame) {
+  const { cols, rows, ch } = frame;
+  const out = new Array(rows);
+  for (let r = 0; r < rows; r++) {
+    out[r] = String.fromCharCode.apply(null, ch.subarray(r * cols, (r + 1) * cols));
+  }
+  return out;
+}
+
+/** FNV-1a over a frame's char plane; used by the golden-frame test. */
+function frameHash(frame) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < frame.ch.length; i++) { h ^= frame.ch[i]; h = Math.imul(h, 16777619) >>> 0; }
+  return h >>> 0;
+}
+
+module.exports = { render, createFrame, frameRows, frameHash, lighting, TONE, RAMP, FLOOR_H };

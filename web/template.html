@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASCII City</title>
+<style>
+:root {
+  /* palette: near-black green, phosphor glow, amber accent for the HUD */
+  --bg: #050a07;
+  --ink: #7dffa0;
+  --dim: #3f9a5c;
+  --accent: #ffd479;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font-family: var(--mono); }
+body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 10px; overflow: hidden; }
+#stage { position: relative; width: 100%; max-width: 1100px; flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
+  border: 1px solid #14301d; border-radius: 6px; background: radial-gradient(ellipse at 50% 40%, #0a1a10 0%, var(--bg) 75%); overflow: hidden; }
+pre { margin: 0; font-family: var(--mono); }
+#screen { color: var(--ink); text-shadow: 0 0 6px rgba(125, 255, 160, 0.45); line-height: 1.2; white-space: pre; }
+#hud { color: var(--accent); font-size: 12px; line-height: 1.35; width: 100%; max-width: 1100px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+#hud pre { white-space: pre-wrap; }
+#help { color: var(--dim); }
+#focus { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 10, 7, 0.55); color: var(--ink); font-size: 14px; cursor: pointer; }
+#focus[hidden] { display: none; }
+#probe { position: absolute; visibility: hidden; font-size: 12px; line-height: 1.2; white-space: pre; }
+@media (prefers-reduced-motion: reduce) { #screen { text-shadow: none; } }
+</style>
+</head>
+<body>
+<div id="stage" tabindex="0" aria-label="ASCII city viewport">
+  <pre id="screen" aria-hidden="true"></pre>
+  <div id="focus">Click to walk. W/S move, A/D strafe, arrows turn and look.</div>
+</div>
+<div id="hud"><pre id="hudL"></pre><pre id="help">W/S move  A/D strafe  arrows turn/look  Shift run  , . time  N night/day  F filler  [ ] detail</pre></div>
+<pre id="probe">MMMMMMMMMM</pre>
+
+<script>
+/*BUNDLE*/
+</script>
+<script>
+(function () {
+  'use strict';
+  var C = __require('index');
+  var world = C.generateWorld({ seed: 'aurora', size: 128 });
+  var cam = C.createCamera(world);
+  var time = 21;
+  var filler = 'sparse';
+  var FONT = 9; // glyph size in CSS px at layout time: smaller = more columns = more detail
+  var MIN_FONT = 5, MAX_FONT = 16;
+
+  var stage = document.getElementById('stage');
+  var screen = document.getElementById('screen');
+  var hudL = document.getElementById('hudL');
+  var focusEl = document.getElementById('focus');
+  var probe = document.getElementById('probe');
+
+  var frame = null, cols = 0, rows = 0, fontPx = FONT, cellAspect = 2;
+
+  function layout() {
+    var r = stage.getBoundingClientRect();
+    probe.style.fontSize = FONT + 'px';
+    var cw = probe.getBoundingClientRect().width / 10;
+    var lh = FONT * 1.2;
+    cols = Math.max(60, Math.min(360, Math.floor(r.width / cw)));
+    rows = Math.max(20, Math.min(140, Math.floor(r.height / lh)));
+    /* scale the font so the glyph grid fills the stage */
+    fontPx = Math.min(r.width / (cols * cw / FONT), r.height / (rows * 1.2));
+    screen.style.fontSize = fontPx.toFixed(2) + 'px';
+    cellAspect = (fontPx * 1.2) / (fontPx * (cw / FONT));
+    frame = C.createFrame(cols, rows);
+  }
+  window.addEventListener('resize', layout);
+  layout();
+
+  var keys = {};
+  function setKey(e, v) {
+    var k = e.key.toLowerCase();
+    keys[k] = v;
+    if (e.shiftKey || k === 'shift') keys.shift = v && e.shiftKey;
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].indexOf(k) >= 0) e.preventDefault();
+  }
+  window.addEventListener('keydown', function (e) {
+    setKey(e, true);
+    if (e.key === '[' || e.key === ']') { FONT = Math.max(MIN_FONT, Math.min(MAX_FONT, FONT + (e.key === '[' ? -1 : 1))); layout(); }
+    if (e.key === ',') time = (time + 23.5) % 24;
+    if (e.key === '.') time = (time + 0.5) % 24;
+    if (e.key.toLowerCase() === 'f') filler = filler === 'sparse' ? 'solid' : 'sparse';
+    if (e.key.toLowerCase() === 'n') time = time >= 6 && time < 18 ? 21 : 12;
+    focusEl.hidden = true;
+  });
+  window.addEventListener('keyup', function (e) { setKey(e, false); });
+  focusEl.addEventListener('click', function () { focusEl.hidden = true; stage.focus(); });
+  window.addEventListener('blur', function () { keys = {}; focusEl.hidden = false; });
+
+  var last = performance.now();
+  function tick(now) {
+    requestAnimationFrame(tick);
+    var dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    var input = {
+      forward: (keys.w ? 1 : 0) - (keys.s ? 1 : 0),
+      strafe: (keys.d ? 1 : 0) - (keys.a ? 1 : 0),
+      turn: (keys.arrowright ? 1 : 0) - (keys.arrowleft ? 1 : 0),
+      look: (keys.arrowup ? 1 : 0) - (keys.arrowdown ? 1 : 0),
+    };
+    C.stepCamera(world, cam, input, dt, !!keys.shift);
+    C.render(frame, world, cam, { time: time, cellAspect: cellAspect, filler: filler });
+    screen.textContent = C.frameRows(frame).join('\n');
+    hudL.textContent = C.buildHud(world, cam, time).join('\n');
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
