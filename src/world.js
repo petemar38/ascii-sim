@@ -293,7 +293,10 @@ function generateWorld(opts = {}) {
     const e = cand[0];
     if (e.count < 2 || e.count * 2 < e.len) return null;
     const t = idx(e.x, e.y);
-    return kind[t] === K.BUILDING && bid[t] === b.id ? e : null;
+    if (kind[t] !== K.BUILDING || bid[t] !== b.id) return null;
+    const [fx, fy] = { [FACE.N]: [0, -1], [FACE.S]: [0, 1], [FACE.W]: [-1, 0], [FACE.E]: [1, 0] }[e.face];
+    // you need room to stand back and read it: the two tiles in front must be open ground, not another building
+    return OPEN(kind[idx(e.x + fx, e.y + fy)]) && OPEN(kind[idx(e.x + fx * 2, e.y + fy * 2)]) ? e : null;
   }
 
   function makeStore(b, k, e) {

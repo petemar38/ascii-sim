@@ -24,6 +24,9 @@ pre { margin: 0; font-family: var(--mono); }
 #hud { color: var(--accent); font-size: 12px; line-height: 1.35; width: 100%; max-width: 1100px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 #hud pre { white-space: pre-wrap; }
 #help { color: var(--dim); }
+#menu { position: absolute; left: 14px; top: 14px; margin: 0; padding: 10px 14px; font-size: 13px; line-height: 1.5; color: var(--accent);
+  background: rgba(5, 10, 7, 0.88); border: 1px solid #2c5a3a; border-radius: 4px; text-shadow: none; z-index: 2; }
+#menu[hidden] { display: none; }
 #focus { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 10, 7, 0.55); color: var(--ink); font-size: 14px; cursor: pointer; }
 #focus[hidden] { display: none; }
 #probe { position: absolute; visibility: hidden; font-size: 12px; line-height: 1.2; white-space: pre; }
@@ -33,9 +36,10 @@ pre { margin: 0; font-family: var(--mono); }
 <body>
 <div id="stage" tabindex="0" aria-label="ASCII city viewport">
   <pre id="screen" aria-hidden="true"></pre>
+  <pre id="menu" hidden></pre>
   <div id="focus">Click to walk. W/S move, A/D strafe, arrows turn and look.</div>
 </div>
-<div id="hud"><pre id="hudL"></pre><pre id="help">W/S move  A/D strafe  arrows turn/look  Shift run  , . time  N night/day  F filler  [ ] detail</pre></div>
+<div id="hud"><pre id="hudL"></pre><pre id="help">W/S move  A/D strafe  arrows turn/look  Shift run  L buildings  , . time  N night/day  F filler  [ ] detail</pre></div>
 <pre id="probe">MMMMMMMMMM</pre>
 
 <script>
@@ -57,6 +61,8 @@ pre { margin: 0; font-family: var(--mono); }
   var hudL = document.getElementById('hudL');
   var focusEl = document.getElementById('focus');
   var probe = document.getElementById('probe');
+  var menuEl = document.getElementById('menu');
+  var menu = null; // list of entries while the travel menu is open
 
   var frame = null, cols = 0, rows = 0, fontPx = FONT, cellAspect = 2;
 
@@ -83,7 +89,21 @@ pre { margin: 0; font-family: var(--mono); }
     if (e.shiftKey || k === 'shift') keys.shift = v && e.shiftKey;
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].indexOf(k) >= 0) e.preventDefault();
   }
+  function openMenu() {
+    menu = C.nearestStores(world, cam, 9);
+    menuEl.textContent = 'NEAREST BUILDINGS  (1-9 go there, L or Esc closes)\n\n' + C.travelMenuLines(menu).join('\n');
+    menuEl.hidden = false; keys = {};
+  }
+  function closeMenu() { menu = null; menuEl.hidden = true; }
   window.addEventListener('keydown', function (e) {
+    if (menu) { // the menu is open: only its own keys do anything
+      var n = parseInt(e.key, 10);
+      if (n >= 1 && n <= menu.length) { C.arriveAt(world, cam, menu[n - 1].store); closeMenu(); }
+      else if (e.key === 'Escape' || e.key.toLowerCase() === 'l') closeMenu();
+      e.preventDefault();
+      return;
+    }
+    if (e.key.toLowerCase() === 'l') { openMenu(); e.preventDefault(); return; }
     setKey(e, true);
     if (e.key === '[' || e.key === ']') { FONT = Math.max(MIN_FONT, Math.min(MAX_FONT, FONT + (e.key === '[' ? -1 : 1))); layout(); }
     if (e.key === ',') time = (time + 23.5) % 24;
@@ -101,7 +121,7 @@ pre { margin: 0; font-family: var(--mono); }
     requestAnimationFrame(tick);
     var dt = Math.min(0.1, (now - last) / 1000);
     last = now;
-    var input = {
+    var input = menu ? {} : {
       forward: (keys.w ? 1 : 0) - (keys.s ? 1 : 0),
       strafe: (keys.d ? 1 : 0) - (keys.a ? 1 : 0),
       turn: (keys.arrowright ? 1 : 0) - (keys.arrowleft ? 1 : 0),

@@ -32,6 +32,12 @@ ground-floor storefront on the face looking onto the street: a door, display win
 awning, a sign you can read from a few tiles away, columns on libraries, and a steeple on churches. Stores are
 assigned with `hash2` only, so adding or tuning them never changes the road layout.
 
+## Finding buildings
+
+`nearestStores(world, cam, 9)` lists the nearest named buildings (distance in metres and compass direction),
+`travelMenuLines(entries)` formats them, and `arriveAt(world, cam, store)` puts the camera on the street in
+front of one, looking at its sign. In the web page and terminal player, press **L**, then **1-9**.
+
 ## The world wraps
 
 The map is a torus: walk off one edge and you arrive on the opposite one, and you can see straight

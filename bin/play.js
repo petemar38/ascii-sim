@@ -8,7 +8,7 @@
  *
  * Options: --seed <word|number>  --size <tiles>  --time <hour 0-24>  --cols <n>  --rows <n>
  * Controls: W/S move, A/D strafe, arrows turn and look, Shift+W run,
- *           , and . change the hour, Q or Esc quits.
+ *           , and . change the hour, L lists the nearest buildings (1-9 to go there), Q or Esc quits.
  */
 
 const C = require('../src');
@@ -61,8 +61,18 @@ function cleanup() {
 
 require('readline').emitKeypressEvents(process.stdin);
 process.stdin.setRawMode(true);
+let menu = null; // list of entries while the travel menu is open
 process.stdin.on('keypress', (str, key) => {
   if (!key) return;
+  if (menu) {
+    const n = parseInt(str, 10);
+    if (n >= 1 && n <= menu.length) { C.arriveAt(world, cam, menu[n - 1].store); menu = null; held.clear(); }
+    else if (key.name === 'escape' || str === 'l' || str === 'L') menu = null;
+    else if (key.ctrl && key.name === 'c') return cleanup();
+    process.stdout.write('\x1b[2J');
+    return;
+  }
+  if (str === 'l' || str === 'L') { menu = C.nearestStores(world, cam, 9); held.clear(); process.stdout.write('\x1b[2J'); return; }
   if (key.name === 'escape' || (key.name === 'q') || (key.ctrl && key.name === 'c')) return cleanup();
   if (str === ',') time = (time + 23.5) % 24;
   else if (str === '.') time = (time + 0.5) % 24;
@@ -89,8 +99,17 @@ setInterval(() => {
     look: (down('up') ? 1 : 0) - (down('down') ? 1 : 0),
   };
   const run = [...held.keys()].some((k) => k.endsWith('+shift'));
-  C.stepCamera(world, cam, input, dt, run);
+  if (!menu) C.stepCamera(world, cam, input, dt, run);
   C.render(frame, world, cam, { time });
+  const rowsOut = C.frameRows(frame);
+  if (menu) { // draw the travel menu over the top-left of the view
+    const lines = ['NEAREST BUILDINGS  (1-9 go there, L or Esc closes)', ''].concat(C.travelMenuLines(menu));
+    lines.forEach((t, i) => {
+      if (i + 1 >= rowsOut.length) return;
+      const w = Math.min(cols - 2, 56);
+      rowsOut[i + 1] = ' ' + ('  ' + t).padEnd(w).slice(0, w) + rowsOut[i + 1].slice(w + 1);
+    });
+  }
   const hud = C.buildHud(world, cam, time);
-  process.stdout.write('\x1b[H\x1b[32m' + C.frameRows(frame).join('\n') + '\n' + '-'.repeat(cols) + '\n' + hud.join('\n') + '\x1b[0m');
+  process.stdout.write('\x1b[H\x1b[32m' + rowsOut.join('\n') + '\n' + '-'.repeat(cols) + '\n' + hud.join('\n') + '\x1b[0m');
 }, 33);
