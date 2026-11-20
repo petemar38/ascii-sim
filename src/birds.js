@@ -296,4 +296,39 @@ function ambientBirds(world, cam) {
   return out;
 }
 
-module.exports = { BIRD, MODE, SPECIES, makeBirds, birdPose, ambientBirds };
+/**
+ * Startled birds. A bird that is perched or feeding on the ground bursts off when you come within a few tiles, climbs
+ * away from you for a few seconds, then circles back and settles where it was. The flight is a record in `world.flush`
+ * (bird -> record); after it ends the bird is an ordinary perched or ground bird again.
+ */
+const FLUSH_R = 4.5, FLUSH_AWAY = 3.2, FLUSH_BACK = 4;
+const F = { x: 0, y: 0, z: 0, hx: 1, hy: 0, flap: true, flying: true };
+function startFlush(world, b, pose, cam, t) {
+  const hx = pose.x - cam.x, hy = pose.y - cam.y;
+  const base = Math.hypot(hx, hy) < 1e-6 ? b.ph : Math.atan2(hy, hx);
+  const a = base + (((b.ph * 7) % 1) - 0.5) * 1.4;
+  return { t0: t + ((b.ph * 13) % 1) * 0.35, x0: pose.x, y0: pose.y, z0: pose.z, dx: Math.cos(a), dy: Math.sin(a), speed: 2.6 + ((b.ph * 3) % 1), climb: 1.1 + ((b.ph * 5) % 1) * 1.1 };
+}
+/** Position of a flushed bird, or null once it has landed again. */
+function flushPose(b, st, t) {
+  const e = t - st.t0;
+  if (e < 0) return birdPose(b, t);
+  if (e > FLUSH_AWAY + FLUSH_BACK) return null;
+  const rate = 5;
+  F.flap = ((t * rate + b.ph) % 1) < 0.5;
+  if (e < FLUSH_AWAY) {
+    const d = st.speed * e;
+    F.x = st.x0 + st.dx * d; F.y = st.y0 + st.dy * d; F.z = st.z0 + st.climb * (1 - Math.exp(-1.3 * e));
+    F.hx = st.dx; F.hy = st.dy;
+  } else {
+    const ex = st.x0 + st.dx * st.speed * FLUSH_AWAY, ey = st.y0 + st.dy * st.speed * FLUSH_AWAY, ez = st.z0 + st.climb * (1 - Math.exp(-1.3 * FLUSH_AWAY));
+    const u = (e - FLUSH_AWAY) / FLUSH_BACK, k = u * u * (3 - 2 * u);
+    const home = birdPose(b, t), hx = home.x, hy = home.y, hz = home.z;
+    F.x = ex + (hx - ex) * k; F.y = ey + (hy - ey) * k; F.z = ez + (hz - ez) * k;
+    F.hx = hx - ex; F.hy = hy - ey;
+    if (u > 0.94) F.flap = false;
+  }
+  return F;
+}
+
+module.exports = { BIRD, MODE, SPECIES, makeBirds, birdPose, ambientBirds, FLUSH_R, startFlush, flushPose };

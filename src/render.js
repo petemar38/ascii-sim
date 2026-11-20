@@ -14,7 +14,8 @@
 const { hash2 } = require('./rng');
 const { K, ROAD_MARK, EDGE_HEIGHT, PROP, DECO, STORE } = require('./world');
 const { shopCell, houseCell } = require('./facade');
-const { SPECIES, birdPose, ambientBirds } = require('./birds');
+const { SPECIES, birdPose, ambientBirds, FLUSH_R, startFlush, flushPose } = require('./birds');
+const { ANIMALS, animalPose, updateFauna } = require('./animals');
 
 const FLOOR_H = 0.4; // one floor, in tiles (a tile is ~8 m, so ~3.2 m per floor)
 const WINDOWS_PER_TILE = 3;
@@ -367,6 +368,10 @@ function render(frame, world, cam, opts = {}) {
   if (world.birds && world.birds.length) {
     drawBirds(frame, world, cam, { wrapD: wrap ? (d) => d - size * Math.round(d / size) : (d) => d, hz, focalX, focalY, tanHalf, planeX, planeY, dirX, dirY, eyeZ, viewDist, light, clock: opts.clock || 0, pixel: pixelMode });
   }
+  if (world.animals && world.animals.length) {
+    updateFauna(world, cam, opts.clock || 0);
+    drawAnimals(frame, world, cam, { wrapD: wrap ? (d) => d - size * Math.round(d / size) : (d) => d, hz, focalX, focalY, tanHalf, planeX, planeY, dirX, dirY, eyeZ, viewDist, clock: opts.clock || 0, pixel: pixelMode });
+  }
   return frame;
 }
 
@@ -658,6 +663,65 @@ function blob(frame, g, sx, dep, f, o) {
 
 /** Birds: one to a few cells each, drawn after the props and tested against the depth buffer. */
 const BIRD_UP_L = 92, BIRD_UP_R = 47, BIRD_FLAT = 45; // '\\' '/' '-'
+/** Cats, dogs, squirrels and rabbits: a one- or two-row glyph sprite, or a few pixels in pixel mode. */
+function drawAnimals(frame, world, cam, g) {
+  const { cols, rows, z } = frame;
+  for (const a of world.animals) {
+    const spec = ANIMALS[a.sp];
+    const hx = g.wrapD(a.x - cam.x), hy = g.wrapD(a.y - cam.y);
+    const hd = hx * g.dirX + hy * g.dirY;
+    if (hd < -12 || hd > g.viewDist * 0.8 + 12) continue;
+    const pose = animalPose(a, g.clock, world.fauna.get(a));
+    const dx = g.wrapD(pose.x - cam.x), dy = g.wrapD(pose.y - cam.y);
+    const dep = dx * g.dirX + dy * g.dirY;
+    if (dep < 0.7 || dep > g.viewDist * 0.8) continue;
+    const camX = (dx * g.planeX + dy * g.planeY) / dep;
+    if (camX > g.tanHalf * 1.05 || camX < -g.tanHalf * 1.05) continue;
+    const sx = (camX / g.tanHalf + 1) * cols * 0.5, dd = dep - 0.1;
+    const pair = spec.tones[a.v], back = BIRD_TONES[pair[0]], breast = BIRD_TONES[pair[1]];
+    const right = pose.hx * g.planeX + pose.hy * g.planeY >= 0;
+    const groundF = g.hz + (g.eyeZ * g.focalY) / dep;
+    const rowB = Math.ceil(groundF - 0.5) - 1; // the row just above the ground line
+    const plot = (x, y, glyph, tn) => {
+      if (x < 0 || x >= cols || y < 0 || y >= rows) return;
+      const i = y * cols + x;
+      if (dd < z[i]) put(frame, i, glyph, tn, dd);
+    };
+    if (g.pixel) {
+      const w = Math.max(1, Math.round((spec.size * 0.6 * g.focalX) / dep)), half = w >> 1, c0 = Math.round(sx);
+      if (w <= 1) { plot(c0, rowB, 35, back); continue; }
+      const h = Math.max(1, Math.round(w * 0.5));
+      for (let k = 0; k < h; k++) for (let x = -half; x <= half; x++) plot(c0 + x, rowB - k, 35, k === 0 && h > 1 ? breast : back);
+      const hw = Math.max(1, Math.round(w / 3)), front = right ? half : -half;
+      for (let q = 0; q < hw; q++) for (let k = 0; k < hw; k++) plot(c0 + front + (right ? q - hw + 1 : -q + hw - 1) + (right ? 1 : -1), rowB - h + 1 - k, 35, back);
+      const headX = c0 + front + (right ? 1 : -1) * (hw > 1 ? 1 : 1), headTop = rowB - h - hw + 1;
+      if (a.sp === 4) { plot(headX, headTop - 1, 35, back); plot(headX, headTop - 2, 35, back); }       // rabbit ears
+      else if (a.sp === 1) plot(headX, headTop - 1, 35, back);                                           // cat ear
+      const tailX = c0 + (right ? -half - 1 : half + 1);
+      if (a.sp === 2) { plot(tailX, rowB - h, 35, breast); plot(tailX, rowB - h - 1, 35, breast); plot(tailX, rowB - h - 2, 35, breast); } // squirrel tail
+      else if (a.sp === 4) plot(tailX, rowB - 1, 35, breast);
+      else plot(tailX, rowB - h, 35, back);
+      continue;
+    }
+    const wc = Math.max(1, Math.min(6, Math.round((spec.size * g.focalX) / dep)));
+    const tall = Math.max(1, Math.min(2, Math.ceil((spec.size * 0.55 * g.focalY) / dep)));
+    const c0 = Math.round(sx - wc / 2);
+    if (wc === 1) { plot(c0, rowB, spec.glyph, back); continue; }
+    const head = right ? c0 + wc - 1 : c0, tail = right ? c0 : c0 + wc - 1;
+    const bodyGlyph = a.sp === 3 ? 35 : 79, tailGlyph = a.sp === 1 ? 126 : a.sp === 3 ? (right ? 47 : 92) : a.sp === 4 ? 42 : 41;
+    for (let x = c0; x < c0 + wc; x++) {
+      if (x === head) plot(x, rowB, 111, back);
+      else if (x === tail && wc >= 3) plot(x, rowB, tailGlyph, a.sp === 4 || a.sp === 2 ? breast : back);
+      else plot(x, rowB, bodyGlyph, x === c0 + (right ? 1 : wc - 2) ? breast : back);
+    }
+    if (tall >= 2) {
+      if (a.sp === 1 || a.sp === 3) plot(head, rowB - 1, 94, back);        // pointed ears
+      else if (a.sp === 4) plot(head, rowB - 1, 124, back);                  // long ears
+      else if (a.sp === 2) plot(tail, rowB - 1, right ? 40 : 41, breast);    // the tail curled over its back
+    }
+  }
+}
+
 /** A bird as a few pixels: a V of wings (up, level or down) with a body, or a small blob when perched. */
 function drawBirdPixels(frame, g, spc, pose, sx, row, dep, dd, back, breast, dot) {
   const { cols, rows, z } = frame;
@@ -686,14 +750,26 @@ function drawBirdPixels(frame, g, spc, pose, sx, row, dep, dd, back, breast, dot
 function drawBirds(frame, world, cam, g) {
   const { cols, rows, ch, tone, id, z } = frame;
   const night = g.light.night, t = g.clock;
+  const flush = world.flush || (world.flush = new Map());
   const all = world.birds.concat(ambientBirds(world, cam));
   for (const b of all) {
     const spc = SPECIES[b.sp];
     if (spc.night ? night < 0.5 : night > 0.72) continue; // songbirds roost after dusk, bats and owls come out
-    const pose = birdPose(b, t);
+    let pose;
+    const st = flush.get(b);
+    if (st) {
+      pose = flushPose(b, st, t);
+      if (!pose) { flush.delete(b); pose = birdPose(b, t); }
+    } else {
+      pose = birdPose(b, t);
+      if (b.mode <= 1) { // perched or feeding: it bolts when you get close
+        const fx = g.wrapD(pose.x - cam.x), fy = g.wrapD(pose.y - cam.y), fz = pose.z - g.eyeZ;
+        if (fx * fx + fy * fy + fz * fz < FLUSH_R * FLUSH_R) { flush.set(b, startFlush(world, b, pose, cam, t)); }
+      }
+    }
     const dx = g.wrapD(pose.x - cam.x), dy = g.wrapD(pose.y - cam.y);
     const dep = dx * g.dirX + dy * g.dirY;
-    if (dep < (pose.flying ? 1.5 : 3) || dep > g.viewDist * 0.9) continue; // birds on the ground or a perch hop off when you get close
+    if (dep < 1.2 || dep > g.viewDist * 0.9) continue;
     const camX = (dx * g.planeX + dy * g.planeY) / dep;
     if (camX > g.tanHalf * 1.05 || camX < -g.tanHalf * 1.05) continue;
     const sx = (camX / g.tanHalf + 1) * cols * 0.5;

@@ -142,3 +142,11 @@ gone round the world, e.g. `1E 0`) and `EXPLORED` (percent of walkable ground se
 `P` switches between characters and real coloured pixels. It is the same renderer at about 320 x 180 with square cells and
 solid fill, painted as flat-shaded pixels (`pixelRgba` for a canvas, `halfBlockRows` for terminals, two pixels per text
 row). Walls, sky and lights use the same palette as colour mode, so day, night and dusk carry over; the minimap still works.
+
+## Animals and startled birds
+
+`src/animals.js`: cats, dogs, squirrels and cottontail rabbits in the yards, parks and sidewalks. They are solid (`stepCamera`
+takes the clock as a sixth argument; with it you cannot walk through an animal), and cats, squirrels and rabbits bolt when you
+get within a few tiles, always along a path checked to be clear of buildings and props, then stand and watch and walk back.
+Birds that are perched or feeding on the ground burst off when you come within about 4 tiles, climb away, and circle back to
+settle. Shrubs are solid too. Running state lives in `world.fauna` and `world.flush`.

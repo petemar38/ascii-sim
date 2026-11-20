@@ -8,7 +8,8 @@ const render = require('./render');
 const color = require('./color');
 const hud = require('./hud');
 const birds = require('./birds');
+const animals = require('./animals');
 const travel = require('./travel');
 const minimap = require('./minimap');
 
-module.exports = { ...rng, ...world, ...camera, ...render, ...color, ...birds, ...hud, ...travel, ...minimap };
+module.exports = { ...rng, ...world, ...camera, ...render, ...color, ...birds, ...animals, ...hud, ...travel, ...minimap };

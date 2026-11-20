@@ -149,7 +149,7 @@ pre { margin: 0; font-family: var(--mono); }
       turn: (keys.arrowright ? 1 : 0) - (keys.arrowleft ? 1 : 0),
       look: (keys.arrowup ? 1 : 0) - (keys.arrowdown ? 1 : 0),
     };
-    C.stepCamera(world, cam, input, dt, !!keys.shift);
+    C.stepCamera(world, cam, input, dt, !!keys.shift, now / 1000);
     C.explore(ex, cam);
     var pk = Math.round(time * 4);
     if (pk !== palKey) { palKey = pk; pal = C.makePalette(time); }

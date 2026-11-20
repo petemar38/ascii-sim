@@ -109,7 +109,7 @@ setInterval(() => {
     look: (down('up') ? 1 : 0) - (down('down') ? 1 : 0),
   };
   const run = [...held.keys()].some((k) => k.endsWith('+shift'));
-  if (!menu) C.stepCamera(world, cam, input, dt, run);
+  if (!menu) C.stepCamera(world, cam, input, dt, run, now / 1000);
   C.explore(ex, cam);
   const usePix = pixOn && !menu;
   if (usePix) {

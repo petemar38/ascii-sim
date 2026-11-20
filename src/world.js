@@ -21,6 +21,7 @@ const { mulberry32, hash2, toSeed } = require('./rng');
 const { makeNamer } = require('./names');
 const { TREE, SHRUB, FLOWER, WEED } = require('./veg');
 const { makeBirds } = require('./birds');
+const { makeAnimals } = require('./animals');
 
 const K = { NONE: 0, ROAD: 1, SIDEWALK: 2, PARK: 3, BUILDING: 4, PLAZA: 5, YARD: 6 };
 const D = { DOWNTOWN: 0, COMMERCIAL: 1, RESIDENTIAL: 2, INDUSTRIAL: 3, PARKLAND: 4, SUBURB: 5 };
@@ -39,7 +40,7 @@ const HOUSE_FLOORS = [0, 1, 2, 1, 2, 2, 3];
 const FACE = { N: 1, S: 2, W: 3, E: 4 };
 
 /** Solid footprint radius (tiles) of props that block walking. Rooftop props and wires are not solid. */
-const PROP_RADIUS = { 1: 0.07, 2: 0.11, 3: 0.07, 4: 0.09, 5: 0.08, 10: 0.2 }; // lamp, tree trunk, signal, hydrant, pole, playground equipment
+const PROP_RADIUS = { 1: 0.07, 2: 0.11, 3: 0.07, 4: 0.09, 5: 0.08, 10: 0.2, 11: 0.15 }; // lamp, tree trunk, signal, hydrant, pole, playground equipment, shrub (11)
 
 /** Anything outside the map reads as a tall boundary wall. */
 const EDGE_HEIGHT = 90;
@@ -627,10 +628,12 @@ function generateWorld(opts = {}) {
 
   const birds = makeBirds({ size, seed: seedValue, kind, district, districts, props, wires, buildings, K, D, PROP, spawn });
 
-  return {
+  const world = {
     seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, birds, propGrid, stores, shops, facades, houses,
     districts, vRoads, hRoads, spawn, landmarks,
   };
+  world.animals = makeAnimals(world); // cats, dogs, squirrels, rabbits (solid; the skittish ones run off)
+  return world;
 }
 
 /* ---------- queries ---------- */

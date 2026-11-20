@@ -7,6 +7,7 @@
  */
 
 const { isWalkable, propClearance, wrapCoord } = require('./world');
+const { animalClearance, updateFauna } = require('./animals');
 
 const WALK_SPEED = 3.2; // tiles per second
 const RUN_SPEED = 6.0;
@@ -29,13 +30,15 @@ function canStand(world, x, y, r = RADIUS) {
 
 /**
  * Advance the camera by dt seconds.
- * input: { forward, strafe, turn, look } each in [-1, 1]; run: boolean.
+ * input: { forward, strafe, turn, look } each in [-1, 1]; run: boolean. Pass the clock (seconds) and animals are solid too
+ * (and skittish ones run off before you reach them).
  * Movement is resolved per axis, so you slide along walls instead of sticking to them.
  */
-function stepCamera(world, cam, input, dt, run = false) {
+function stepCamera(world, cam, input, dt, run = false, clock) {
   cam.angle += (input.turn || 0) * TURN_SPEED * dt;
   cam.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, cam.pitch + (input.look || 0) * LOOK_SPEED * dt));
 
+  if (clock !== undefined) updateFauna(world, cam, clock);
   const f = input.forward || 0, s = input.strafe || 0;
   if (f === 0 && s === 0) return cam;
   const speed = (run ? RUN_SPEED : WALK_SPEED) * dt;
@@ -46,7 +49,10 @@ function stepCamera(world, cam, input, dt, run = false) {
   const ok = (nx, ny) => {
     if (!canStand(world, nx, ny)) return false;
     const c = propClearance(world, nx, ny, PROP_BODY);
-    return c >= 0 || c >= propClearance(world, cam.x, cam.y, PROP_BODY);
+    if (!(c >= 0 || c >= propClearance(world, cam.x, cam.y, PROP_BODY))) return false;
+    if (clock === undefined) return true;
+    const ac = animalClearance(world, nx, ny, PROP_BODY, clock);
+    return ac >= 0 || ac >= animalClearance(world, cam.x, cam.y, PROP_BODY, clock);
   };
   if (ok(cam.x + dx, cam.y)) cam.x += dx;
   if (ok(cam.x, cam.y + dy)) cam.y += dy;
