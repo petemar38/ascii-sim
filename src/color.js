@@ -193,4 +193,56 @@ function ansiRows(frame, pal, truecolor, overlay) {
   return res;
 }
 
-module.exports = { makePalette, slotOf, skyStep, htmlRows, ansiRows, LEVELS };
+/* ---------- pixel mode: the same frame, drawn as plain coloured pixels instead of glyphs ---------- */
+
+const px = [0, 0, 0];
+/** Colour of cell i as a pixel (into the shared px array). Glyph density only chooses the brightness level. */
+function pixelOf(frame, pal, i) {
+  const bg = skyStep(frame, i);
+  if (bg >= 0 && (frame.ch[i] === 32 || frame.tone[i] === T.SKY)) { // open sky: just the gradient
+    px[0] = pal.sky.rgb[bg * 3]; px[1] = pal.sky.rgb[bg * 3 + 1]; px[2] = pal.sky.rgb[bg * 3 + 2];
+    return px;
+  }
+  const tone = frame.tone[i];
+  let s;
+  if (frame.ch[i] === 32 && bg < 0) s = (tone === T.WALL && frame.id[i] > 0 ? slotOf(frame, i) : tone * LEVELS) + 1; // a blank solid cell: dim, not black
+  else s = slotOf(frame, i);
+  if (bg >= 0 && frame.tone[i] <= T.STAR) { // a star on the sky
+    px[0] = 236; px[1] = 236; px[2] = 208;
+    return px;
+  }
+  px[0] = pal.rgb[s * 3]; px[1] = pal.rgb[s * 3 + 1]; px[2] = pal.rgb[s * 3 + 2];
+  return px;
+}
+
+/** Fill an RGBA buffer (Uint8ClampedArray, cols * rows * 4) for canvas putImageData. */
+function pixelRgba(frame, pal, out) {
+  const n = frame.cols * frame.rows;
+  for (let i = 0, o = 0; i < n; i++, o += 4) {
+    const c = pixelOf(frame, pal, i);
+    out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = 255;
+  }
+  return out;
+}
+
+/** Terminal pixels: each character cell is two pixels, drawn as an upper half block with a foreground and a background. */
+function halfBlockRows(frame, pal, truecolor, overlay) {
+  const { cols, rows } = frame;
+  const cube6 = (v) => (v < 48 ? 0 : v < 115 ? 1 : Math.min(5, Math.floor((v - 35) / 40)));
+  const code = (r, g, b, fg) => truecolor ? `\x1b[${fg ? 38 : 48};2;${Math.round(r)};${Math.round(g)};${Math.round(b)}m`
+    : `\x1b[${fg ? 38 : 48};5;${16 + 36 * cube6(r) + 6 * cube6(g) + cube6(b)}m`;
+  const out = [];
+  for (let y = 0; y + 1 < rows; y += 2) {
+    let line = '';
+    const r = y >> 1, ovRow = overlay && r >= overlay.y0 && r < overlay.y0 + overlay.rows.length ? overlay.rows[r - overlay.y0] : null;
+    for (let x = 0; x < (ovRow ? overlay.x0 : cols); x++) {
+      const a = pixelOf(frame, pal, y * cols + x), ar = a[0], ag = a[1], ab = a[2];
+      const b = pixelOf(frame, pal, (y + 1) * cols + x);
+      line += code(ar, ag, ab, true) + code(b[0], b[1], b[2], false) + '\u2580';
+    }
+    out.push(line + '\x1b[0m' + (ovRow || ''));
+  }
+  return out;
+}
+
+module.exports = { pixelOf, pixelRgba, halfBlockRows, makePalette, slotOf, skyStep, htmlRows, ansiRows, LEVELS };

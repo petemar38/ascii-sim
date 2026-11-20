@@ -64,6 +64,8 @@ process.stdin.setRawMode(true);
 let menu = null; // list of entries while the travel menu is open
 const ex = C.createExplorer(world);
 C.exploreJump(ex, cam);
+let pixFrame = null;
+let pixOn = false; // P: half-block pixels instead of characters
 let mapMode = 1; // M cycles: 0 off, 1 local (centred on you), 2 the whole world
 let colorOn = process.env.ASCII_SIM_COLOR !== "0"; // colour is the default; C toggles, ASCII_SIM_COLOR=0 starts in green phosphor
 const truecolor = /truecolor|24bit/i.test(process.env.COLORTERM || '');
@@ -79,6 +81,7 @@ process.stdin.on('keypress', (str, key) => {
   }
   if (str === 'l' || str === 'L') { menu = C.nearestStores(world, cam, 9); held.clear(); process.stdout.write('\x1b[2J'); return; }
   if (key.name === 'escape' || (key.name === 'q') || (key.ctrl && key.name === 'c')) return cleanup();
+  if (str === 'p' || str === 'P') { pixOn = !pixOn; process.stdout.write('\x1b[2J'); return; }
   if (str === 'm' || str === 'M') { mapMode = (mapMode + 1) % 3; process.stdout.write('\x1b[2J'); return; }
   if (str === 'c' || str === 'C') { colorOn = !colorOn; process.stdout.write('\x1b[2J'); return; }
   if (str === ',') time = (time + 23.5) % 24;
@@ -108,7 +111,11 @@ setInterval(() => {
   const run = [...held.keys()].some((k) => k.endsWith('+shift'));
   if (!menu) C.stepCamera(world, cam, input, dt, run);
   C.explore(ex, cam);
-  C.render(frame, world, cam, { time, clock: now / 1000 });
+  const usePix = pixOn && !menu;
+  if (usePix) {
+    if (!pixFrame || pixFrame.cols !== cols || pixFrame.rows !== rows * 2) pixFrame = C.createFrame(cols, rows * 2);
+    C.render(pixFrame, world, cam, { time, cellAspect: 1, filler: 'solid', clock: now / 1000 });
+  } else C.render(frame, world, cam, { time, clock: now / 1000 });
   const useColor = colorOn && !menu; // the travel menu is drawn as plain text over the view
   let overlay = null, mm = null;
   if (mapMode && !menu) {
@@ -117,8 +124,9 @@ setInterval(() => {
     mm = C.buildMap(world, ex, cam, mapMode === 1 ? 'local' : 'world', { cols: mc, rows: mr, blink: Math.floor(now / 400) % 2 === 0 });
     overlay = { x0: cols - mc, y0: 0, rows: useColor ? C.mapAnsi(mm, truecolor) : C.mapPlain(mm) };
   }
-  const rowsOut = useColor ? C.ansiRows(frame, C.makePalette(time), truecolor, overlay) : C.frameRows(frame);
-  if (overlay && !useColor) overlay.rows.forEach((t, i) => { if (i < rowsOut.length) rowsOut[i] = rowsOut[i].slice(0, overlay.x0) + t; });
+  if (usePix && overlay) overlay.rows = C.mapAnsi(mm, truecolor); // the map is always colour over pixels
+  const rowsOut = usePix ? C.halfBlockRows(pixFrame, C.makePalette(time), truecolor, overlay) : useColor ? C.ansiRows(frame, C.makePalette(time), truecolor, overlay) : C.frameRows(frame);
+  if (overlay && !useColor && !usePix) overlay.rows.forEach((t, i) => { if (i < rowsOut.length) rowsOut[i] = rowsOut[i].slice(0, overlay.x0) + t; });
   if (menu) { // draw the travel menu over the top-left of the view
     const lines = ['NEAREST BUILDINGS  (1-9 go there, L or Esc closes)', ''].concat(C.travelMenuLines(menu));
     lines.forEach((t, i) => {

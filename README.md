@@ -136,3 +136,9 @@ line passing under you; on the world map your marker leaves one edge and comes b
 walked near is lit and the rest stays dim, `S` marks where you started, and the HUD shows `LOOPS` (how many times you have
 gone round the world, e.g. `1E 0`) and `EXPLORED` (percent of walkable ground seen). API: `createExplorer`, `explore`,
 `exploreJump` (after a teleport), `buildMap`, `mapHtml`, `mapAnsi`, `mapPlain`, `mapHudLines`.
+
+## Pixel mode (P)
+
+`P` switches between characters and real coloured pixels. It is the same renderer at about 320 x 180 with square cells and
+solid fill, painted as flat-shaded pixels (`pixelRgba` for a canvas, `halfBlockRows` for terminals, two pixels per text
+row). Walls, sky and lights use the same palette as colour mode, so day, night and dusk carry over; the minimap still works.
