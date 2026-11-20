@@ -625,7 +625,7 @@ function generateWorld(opts = {}) {
     if (list) list.push(p); else propGrid.set(k, [p]);
   }
 
-  const birds = makeBirds({ size, seed: seedValue, kind, district, districts, props, wires, buildings, K, D, PROP });
+  const birds = makeBirds({ size, seed: seedValue, kind, district, districts, props, wires, buildings, K, D, PROP, spawn });
 
   return {
     seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, birds, propGrid, stores, shops, facades, houses,

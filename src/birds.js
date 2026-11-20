@@ -22,7 +22,8 @@ const MODE = { PERCH: 0, GROUND: 1, CIRCLE: 2, LINE: 3, FLIT: 4, HOVER: 5 };
 
 /** size in tiles (exaggerated, so a songbird is still a cell or two); back/breast/dot are tone names. */
 const SPECIES = [];
-function sp(id, name, size, back, breast, dot, extra) { SPECIES[id] = Object.assign({ name, size, back, breast, dot }, extra); }
+const SIZE_BOOST = 1.5; // birds are drawn larger than life so they read as more than a speck
+function sp(id, name, size, back, breast, dot, extra) { SPECIES[id] = Object.assign({ name, size: size * SIZE_BOOST, back, breast, dot }, extra); }
 sp(BIRD.ROBIN,      'American robin',         0.20, 'B_GRAY',  'B_ORANGE', 'B_ORANGE');
 sp(BIRD.CARDINAL,   'northern cardinal',      0.20, 'B_RED',   'B_RED',    'B_RED');
 sp(BIRD.BLUEJAY,    'blue jay',               0.24, 'B_BLUE',  'B_WHITE',  'B_BLUE');
@@ -147,7 +148,7 @@ function makeBirds(ctx) {
   }
 
   /* geese heading north in a V, high up */
-  const nGeese = Math.max(2, Math.round(6 * area));
+  const nGeese = Math.max(2, Math.round(12 * area));
   for (let g = 0; g < nGeese; g++) {
     const a = -Math.PI / 2 + R(-0.5, 0.5), speed = R(1.6, 2.2), n = 5 + ((rnd() * 5) | 0);
     const x0 = R(0, size), y0 = R(0, size), z0 = R(2.2, 3.8), ph = rnd() * 100;
@@ -160,30 +161,30 @@ function makeBirds(ctx) {
   }
 
   /* turkey vultures (a kettle of three or four) and red-tailed hawks, soaring in wide circles */
-  for (let g = 0, n = Math.max(2, Math.round(8 * area)); g < n; g++) {
+  for (let g = 0, n = Math.max(2, Math.round(14 * area)); g < n; g++) {
     const cx = R(0, size), cy = R(0, size), r = R(5, 11), w = (rnd() < 0.5 ? -1 : 1) * R(0.1, 0.17), z = R(2.6, 4.2);
     const m = 2 + ((rnd() * 3) | 0);
     for (let q = 0; q < m; q++) birds.push({ sp: BIRD.VULTURE, mode: MODE.CIRCLE, cx: cx + R(-1.5, 1.5), cy: cy + R(-1.5, 1.5), R: r + R(-1.5, 1.5), w, z: z + R(-0.4, 0.4), dz: 0.15, rate: 0, ph: rnd() * 100, bias: 0.3 });
   }
-  for (let g = 0, n = Math.max(2, Math.round(7 * area)); g < n; g++) {
+  for (let g = 0, n = Math.max(2, Math.round(14 * area)); g < n; g++) {
     birds.push({ sp: BIRD.HAWK, mode: MODE.CIRCLE, cx: R(0, size), cy: R(0, size), R: R(4, 9), w: (rnd() < 0.5 ? -1 : 1) * R(0.13, 0.22), z: R(2, 3.6), dz: 0.2, rate: 0, ph: rnd() * 100, bias: 0.3 });
   }
 
   /* crows, a few on the wing */
-  for (let g = 0, n = Math.max(2, Math.round(14 * area)); g < n; g++) {
-    const cx = R(0, size), cy = R(0, size), r = R(3, 9), w = (rnd() < 0.5 ? -1 : 1) * R(0.2, 0.35), z = R(0.9, 2);
+  for (let g = 0, n = Math.max(2, Math.round(90 * area)); g < n; g++) {
+    const cx = R(0, size), cy = R(0, size), r = R(3, 9), w = (rnd() < 0.5 ? -1 : 1) * R(0.2, 0.35), z = R(1.4, 3.2);
     const m = 1 + ((rnd() * 3) | 0);
     for (let q = 0; q < m; q++) birds.push({ sp: BIRD.CROW, mode: MODE.CIRCLE, cx, cy, R: r + R(-0.8, 0.8), w, z: z + R(-0.2, 0.2), dz: 0.2, rate: 2.5, ph: rnd() * 100, bias: 0.2 });
   }
 
   /* pigeon flocks wheeling round the downtown and commercial blocks */
-  for (let g = 0, n = Math.max(2, Math.round(12 * area)); g < n; g++) {
+  for (let g = 0, n = Math.max(2, Math.round(40 * area)); g < n; g++) {
     let cx = 0, cy = 0;
     for (let tries = 0; tries < 40; tries++) {
       cx = R(0, size); cy = R(0, size);
       if (dtype(cx, cy) <= D.COMMERCIAL) break;
     }
-    const r = R(3, 6), w = (rnd() < 0.5 ? -1 : 1) * R(0.3, 0.45), z = R(1.1, 2.6), m = 7 + ((rnd() * 6) | 0), ph0 = rnd() * 6.28;
+    const r = R(3, 6), w = (rnd() < 0.5 ? -1 : 1) * R(0.3, 0.45), z = R(1.6, 3.2), m = 7 + ((rnd() * 6) | 0), ph0 = rnd() * 6.28;
     for (let q = 0; q < m; q++) birds.push({ sp: BIRD.PIGEON, mode: MODE.CIRCLE, cx, cy, R: r + R(-0.7, 0.7), w, z: z + R(-0.3, 0.3), dz: 0.25, rate: 3, ph: ph0 + R(-0.5, 0.5), bias: 0.2 });
   }
 
@@ -191,14 +192,28 @@ function makeBirds(ctx) {
   const parks = [];
   for (let y = 0; y < size; y += 3) for (let x = 0; x < size; x += 3) if (kind[y * size + x] === K.PARK) parks.push([x, y]);
   if (parks.length) {
-    for (let g = 0, n = Math.max(3, Math.round(16 * area)); g < n; g++) {
+    for (let g = 0, n = Math.max(3, Math.round(90 * area)); g < n; g++) {
       const [px, py] = parks[(rnd() * parks.length) | 0];
       const m = 2 + ((rnd() * 3) | 0);
-      for (let q = 0; q < m; q++) birds.push({ sp: BIRD.SWALLOW, mode: MODE.FLIT, cx: px, cy: py, ax: R(3, 6), ay: R(3, 6), az: R(0.15, 0.3), z: R(0.5, 0.95), w1: R(0.7, 1.1), w2: R(0.6, 1), w3: R(1.5, 2.5), ph: rnd() * 100, rate: 4, bias: 0.15 });
+      for (let q = 0; q < m; q++) birds.push({ sp: BIRD.SWALLOW, mode: MODE.FLIT, cx: px, cy: py, ax: R(3, 6), ay: R(3, 6), az: R(0.2, 0.4), z: R(0.9, 1.8), w1: R(0.7, 1.1), w2: R(0.6, 1), w3: R(1.5, 2.5), ph: rnd() * 100, rate: 4, bias: 0.15 });
     }
-    for (let g = 0, n = Math.max(1, Math.round(3 * area)); g < n; g++) {
+    for (let g = 0, n = Math.max(1, Math.round(6 * area)); g < n; g++) {
       const [px, py] = parks[(rnd() * parks.length) | 0], w1 = R(0.35, 0.5), w2 = R(0.3, 0.45), ph0 = rnd() * 100, z = R(1, 1.8);
       for (let q = 0; q < 14; q++) birds.push({ sp: BIRD.STARLING, mode: MODE.FLIT, cx: px, cy: py, ax: 5 + R(-0.6, 0.6), ay: 4 + R(-0.6, 0.6), az: 0.4, z, w1, w2, w3: 0.5, ph: ph0 + R(-0.35, 0.35), rate: 4.5, bias: 0.15 });
+    }
+  }
+  /* a few birds always in sight of where you start, so the first look at the city has wings in it */
+  const sp0 = ctx.spawn;
+  if (sp0) {
+    for (let g = 0; g < 4; g++) {
+      const a = R(0, 6.28), d = R(8, 18), cx = sp0.x + Math.cos(a) * d, cy = sp0.y + Math.sin(a) * d, w = (g & 1 ? -1 : 1) * R(0.25, 0.4);
+      for (let q = 0; q < 3; q++) birds.push({ sp: g < 2 ? BIRD.CROW : BIRD.PIGEON, mode: MODE.CIRCLE, cx, cy, R: R(3, 6), w, z: R(1.2, 2.4), dz: 0.2, rate: 2.8, ph: rnd() * 100, bias: 0.2 });
+    }
+    for (let q = 0; q < 6; q++) birds.push({ sp: BIRD.SWALLOW, mode: MODE.FLIT, cx: sp0.x + R(-12, 12), cy: sp0.y + R(-12, 12), ax: R(3, 6), ay: R(3, 6), az: 0.25, z: R(0.8, 1.4), w1: R(0.7, 1.1), w2: R(0.6, 1), w3: R(1.5, 2.5), ph: rnd() * 100, rate: 4, bias: 0.15 });
+    const a = -Math.PI / 2 + R(-0.4, 0.4), dx = Math.cos(a), dy = Math.sin(a);
+    for (let q = 0; q < 7; q++) { // geese crossing overhead
+      const row = Math.ceil(q / 2), side = q === 0 ? 0 : (q % 2 ? 1 : -1);
+      birds.push({ sp: BIRD.GOOSE, mode: MODE.LINE, x: sp0.x + 14 * dx - dx * row * 0.7 - dy * side * row * 0.55, y: sp0.y + 14 * dy - dy * row * 0.7 + dx * side * row * 0.55, z: 1.6, vx: dx * 1.1, vy: dy * 1.1, rate: 1.5, ph: q * 0.13, bias: 0.3 });
     }
   }
   return birds;
@@ -250,4 +265,35 @@ function birdPose(b, t) {
   return o;
 }
 
-module.exports = { BIRD, MODE, SPECIES, makeBirds, birdPose };
+/**
+ * Birds that are always about wherever you are: the sky is divided into 24-tile cells, and each cell near you holds
+ * a small flock (crows, pigeons or swallows) wheeling overhead, worked out from the cell's coordinates alone. Nothing is
+ * stored in the world; records are cached by cell, and the world wraps, so it works across the seam too.
+ */
+const AMBIENT_CELL = 24;
+const ambientCache = new Map();
+function ambientBirds(world, cam) {
+  const size = world.size, n = Math.round(size / AMBIENT_CELL);
+  const ci = Math.floor(cam.x / AMBIENT_CELL), cj = Math.floor(cam.y / AMBIENT_CELL);
+  const out = [];
+  for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) {
+    const i = (((ci + di) % n) + n) % n, j = (((cj + dj) % n) + n) % n, key = world.seed + ':' + i + ',' + j;
+    let list = ambientCache.get(key);
+    if (!list) {
+      const r = mulberry32(((world.seed | 0) ^ Math.imul(i + 1, 73856093) ^ Math.imul(j + 1, 19349663)) >>> 0);
+      list = [];
+      if (r() < 0.85) {
+        const kindR = r(), sp = kindR < 0.4 ? BIRD.CROW : kindR < 0.75 ? BIRD.PIGEON : BIRD.STARLING;
+        const cx = i * AMBIENT_CELL + r() * AMBIENT_CELL, cy = j * AMBIENT_CELL + r() * AMBIENT_CELL;
+        const rad = 4 + r() * 4, w = (r() < 0.5 ? -1 : 1) * (0.25 + r() * 0.2), z = 1.8 + r() * 1.8, m = 2 + ((r() * 3) | 0), ph0 = r() * 6.28;
+        for (let q = 0; q < m; q++) list.push({ sp, mode: MODE.CIRCLE, cx, cy, R: rad + (r() - 0.5) * 1.5, w, z: z + (r() - 0.5) * 0.5, dz: 0.25, rate: 2.8, ph: ph0 + (r() - 0.5), bias: 0.2 });
+      }
+      if (ambientCache.size > 4000) ambientCache.clear();
+      ambientCache.set(key, list);
+    }
+    for (const b of list) out.push(b);
+  }
+  return out;
+}
+
+module.exports = { BIRD, MODE, SPECIES, makeBirds, birdPose, ambientBirds };

@@ -14,7 +14,7 @@
 const { hash2 } = require('./rng');
 const { K, ROAD_MARK, EDGE_HEIGHT, PROP, DECO, STORE } = require('./world');
 const { shopCell, houseCell } = require('./facade');
-const { SPECIES, birdPose } = require('./birds');
+const { SPECIES, birdPose, ambientBirds } = require('./birds');
 
 const FLOOR_H = 0.4; // one floor, in tiles (a tile is ~8 m, so ~3.2 m per floor)
 const WINDOWS_PER_TILE = 3;
@@ -660,7 +660,8 @@ const BIRD_UP_L = 92, BIRD_UP_R = 47, BIRD_FLAT = 45; // '\\' '/' '-'
 function drawBirds(frame, world, cam, g) {
   const { cols, rows, ch, tone, id, z } = frame;
   const night = g.light.night, t = g.clock;
-  for (const b of world.birds) {
+  const all = world.birds.concat(ambientBirds(world, cam));
+  for (const b of all) {
     const spc = SPECIES[b.sp];
     if (spc.night ? night < 0.5 : night > 0.72) continue; // songbirds roost after dusk, bats and owls come out
     const pose = birdPose(b, t);
