@@ -92,6 +92,7 @@ function render(frame, world, cam, opts = {}) {
   const cellAspect = opts.cellAspect || 2;
   const time = opts.time === undefined ? 21 : opts.time;
   const sparse = opts.filler !== 'solid';
+  const pixelMode = cellAspect < 1.5; // square cells: drawn as pixels, so sprites are drawn as pixel art, not glyphs
   const light = lighting(time);
   const { ambient, night } = light;
   const size = world.size;
@@ -136,7 +137,7 @@ function render(frame, world, cam, opts = {}) {
 
     /* ---- sky and ground ---- */
     const ang = cam.angle + Math.atan(camX);
-    const starBucket = Math.floor(ang * 100);
+    const starBucket = pixelMode ? Math.floor(ang * cols * 0.9) : Math.floor(ang * 100); // one star = one pixel wide in pixel mode
     const horizonRow = Math.floor(hz);
     for (let r = 0; r < rows; r++) {
       const i = r * cols + x;
@@ -146,7 +147,7 @@ function render(frame, world, cam, opts = {}) {
         let tn = TONE.SKY;
         if (night > 0.15) {
           const hv = hash2(starBucket, r - horizonRow, seed ^ 0x51ed);
-          if ((hv & 0x3ff) < 14 * night) { code = (hv & 0x400) ? 42 : 46; tn = TONE.STAR; } // '*' or '.'
+          if ((hv & 0x3ff) < (pixelMode ? 1.6 : 14) * night) { code = (hv & 0x400) ? 42 : 46; tn = TONE.STAR; } // '*' or '.'
         }
         ch[i] = code; tone[i] = tn; id[i] = 0; zbuf[i] = 1e9;
       } else {
@@ -364,7 +365,7 @@ function render(frame, world, cam, opts = {}) {
     drawProps(frame, world, cam, { wrapD: wrap ? (d) => d - size * Math.round(d / size) : (d) => d, hz, focalX, focalY, tanHalf, dirX, dirY, planeX, planeY, eyeZ, viewDist, light, haze, seed });
   }
   if (world.birds && world.birds.length) {
-    drawBirds(frame, world, cam, { wrapD: wrap ? (d) => d - size * Math.round(d / size) : (d) => d, hz, focalX, focalY, tanHalf, planeX, planeY, dirX, dirY, eyeZ, viewDist, light, clock: opts.clock || 0 });
+    drawBirds(frame, world, cam, { wrapD: wrap ? (d) => d - size * Math.round(d / size) : (d) => d, hz, focalX, focalY, tanHalf, planeX, planeY, dirX, dirY, eyeZ, viewDist, light, clock: opts.clock || 0, pixel: pixelMode });
   }
   return frame;
 }
@@ -657,6 +658,31 @@ function blob(frame, g, sx, dep, f, o) {
 
 /** Birds: one to a few cells each, drawn after the props and tested against the depth buffer. */
 const BIRD_UP_L = 92, BIRD_UP_R = 47, BIRD_FLAT = 45; // '\\' '/' '-'
+/** A bird as a few pixels: a V of wings (up, level or down) with a body, or a small blob when perched. */
+function drawBirdPixels(frame, g, spc, pose, sx, row, dep, dd, back, breast, dot) {
+  const { cols, rows, z } = frame;
+  const w = Math.max(1, Math.round((spc.size * 0.55 * g.focalX) / dep)), c0 = Math.round(sx);
+  const plot = (x, y, tn) => {
+    if (x < 0 || x >= cols || y < 0 || y >= rows) return;
+    const i = y * cols + x;
+    if (dd < z[i]) put(frame, i, 35, tn, dd);
+  };
+  if (w <= 1) { plot(c0, row, dot); return; }
+  const half = w >> 1;
+  if (pose.flying) {
+    for (let dx = -half; dx <= half; dx++) {
+      const wingUp = pose.flap ? -1 : (spc.dihedral ? -0.5 : 0.35); // flapping up, held in a V, or gliding with the tips slightly down
+      const dy = Math.round(Math.abs(dx) * 0.55 * wingUp);
+      plot(c0 + dx, row + dy, dx === 0 ? breast : back);
+    }
+    if (w >= 5) plot(c0, row + 1, breast); // a thicker body on bigger birds
+    return;
+  }
+  const h = Math.max(1, Math.round(w * 0.5)), right = pose.hx * g.planeX + pose.hy * g.planeY >= 0;
+  for (let dy = 0; dy < h; dy++) for (let dx = -half; dx <= half; dx++) plot(c0 + dx, row - dy, dy === 0 ? breast : back);
+  plot(c0 + (right ? half + 1 : -half - 1), row - h, back); // head
+}
+
 function drawBirds(frame, world, cam, g) {
   const { cols, rows, ch, tone, id, z } = frame;
   const night = g.light.night, t = g.clock;
@@ -667,7 +693,7 @@ function drawBirds(frame, world, cam, g) {
     const pose = birdPose(b, t);
     const dx = g.wrapD(pose.x - cam.x), dy = g.wrapD(pose.y - cam.y);
     const dep = dx * g.dirX + dy * g.dirY;
-    if (dep < 1 || dep > g.viewDist * 0.9) continue;
+    if (dep < (pose.flying ? 1.5 : 3) || dep > g.viewDist * 0.9) continue; // birds on the ground or a perch hop off when you get close
     const camX = (dx * g.planeX + dy * g.planeY) / dep;
     if (camX > g.tanHalf * 1.05 || camX < -g.tanHalf * 1.05) continue;
     const sx = (camX / g.tanHalf + 1) * cols * 0.5;
@@ -676,6 +702,7 @@ function drawBirds(frame, world, cam, g) {
     if (row < 0 || row >= rows) continue;
     const back = BIRD_TONES[spc.back], breast = BIRD_TONES[spc.breast], dot = BIRD_TONES[spc.dot];
     const dd = dep - b.bias;
+    if (g.pixel) { drawBirdPixels(frame, g, spc, pose, sx, row, dep, dd, back, breast, dot); continue; }
     const c0 = Math.round(sx - wc / 2);
     const right = pose.hx * g.planeX + pose.hy * g.planeY >= 0; // heading to the right of the screen
     for (let k = 0; k < wc; k++) {

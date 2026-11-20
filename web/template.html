@@ -29,7 +29,7 @@ pre { margin: 0; font-family: var(--mono); }
   background: rgba(5, 10, 7, 0.88); border: 1px solid #2c5a3a; border-radius: 4px; text-shadow: none; z-index: 2; }
 #pix { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; }
 #pix[hidden] { display: none; }
-#map { position: absolute; right: 10px; top: 10px; margin: 0; font-size: 9px; line-height: 1.2; white-space: pre; border: 1px solid #ffffff55; border-radius: 3px; text-shadow: none; z-index: 1; pointer-events: none; opacity: 0.94; }
+#map { position: absolute; right: 10px; top: 10px; margin: 0; image-rendering: pixelated; border: 1px solid #ffffff55; border-radius: 3px; text-shadow: none; z-index: 1; pointer-events: none; opacity: 0.94; }
 #map[hidden] { display: none; }
 #menu[hidden] { display: none; }
 #focus { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 10, 7, 0.55); color: var(--ink); font-size: 14px; cursor: pointer; }
@@ -42,7 +42,7 @@ pre { margin: 0; font-family: var(--mono); }
 <div id="stage" tabindex="0" aria-label="ASCII city viewport">
   <pre id="screen" class="color" aria-hidden="true"></pre>
   <canvas id="pix" hidden></canvas>
-  <pre id="map"></pre>
+  <canvas id="map"></canvas>
   <pre id="menu" hidden></pre>
   <div id="focus">Click to walk. W/S move, A/D strafe, arrows turn and look.</div>
 </div>
@@ -70,7 +70,8 @@ pre { margin: 0; font-family: var(--mono); }
   var focusEl = document.getElementById('focus');
   var probe = document.getElementById('probe');
   var menuEl = document.getElementById('menu');
-  var mapEl = document.getElementById('map');
+  var mapEl = document.getElementById('map'), mctx = mapEl.getContext('2d');
+  var mbg = document.createElement('canvas'), mbgx = mbg.getContext('2d');
   var pixEl = document.getElementById('pix'), pctx = pixEl.getContext('2d');
   var pixOn = false, pframe = null, pimg = null, PIXW = 320; // P: draw real coloured pixels instead of characters
   var ex = C.createExplorer(world);
@@ -161,11 +162,25 @@ pre { margin: 0; font-family: var(--mono); }
       if (colorOn) screen.innerHTML = C.htmlRows(frame, pal);
       else screen.textContent = C.frameRows(frame).join('\n');
     }
-    if (mapMode) {
+    if (mapMode) { // drawn on a canvas, so its cells meet exactly (no gaps between rows)
       var sr = stage.getBoundingClientRect(), wide = mapMode === 2;
-      var mcols = wide ? 96 : 49, mrows = wide ? 36 : 25;
-      mapEl.style.fontSize = Math.max(4, Math.min(9, (sr.width * (wide ? 0.6 : 0.4)) / (mcols * 0.6), (sr.height * 0.85) / (mrows * 1.2))).toFixed(2) + 'px';
-      mapEl.innerHTML = C.mapHtml(C.buildMap(world, ex, cam, wide ? 'world' : 'local', { cols: mcols, rows: mrows, blink: Math.floor(now / 400) % 2 === 0 }));
+      var mcols = wide ? 96 : 49, mrows = wide ? 36 : 25, CW = 6, CH = 12;
+      var mm = C.buildMap(world, ex, cam, wide ? 'world' : 'local', { cols: mcols, rows: mrows, blink: Math.floor(now / 400) % 2 === 0 });
+      var scale = Math.min(1.5, (sr.width * (wide ? 0.6 : 0.4)) / (mcols * CW), (sr.height * 0.85) / (mrows * CH));
+      if (mapEl.width !== mcols * CW) { mapEl.width = mcols * CW; mapEl.height = mrows * CH; mbg.width = mcols; mbg.height = mrows; }
+      mapEl.style.width = (mcols * CW * scale).toFixed(0) + 'px'; mapEl.style.height = (mrows * CH * scale).toFixed(0) + 'px';
+      var mimg = mbgx.createImageData(mcols, mrows);
+      for (var q = 0; q < mcols * mrows; q++) { mimg.data[q * 4] = mm.bg[q * 3]; mimg.data[q * 4 + 1] = mm.bg[q * 3 + 1]; mimg.data[q * 4 + 2] = mm.bg[q * 3 + 2]; mimg.data[q * 4 + 3] = 255; }
+      mbgx.putImageData(mimg, 0, 0);
+      mctx.imageSmoothingEnabled = false;
+      mctx.drawImage(mbg, 0, 0, mcols * CW, mrows * CH);
+      mctx.font = 'bold ' + (CH - 2) + 'px monospace'; mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+      for (var gy = 0; gy < mrows; gy++) for (var gx = 0; gx < mcols; gx++) {
+        var gi = gy * mcols + gx;
+        if (mm.ch[gi] === 32) continue;
+        mctx.fillStyle = 'rgb(' + mm.fg[gi * 3] + ',' + mm.fg[gi * 3 + 1] + ',' + mm.fg[gi * 3 + 2] + ')';
+        mctx.fillText(String.fromCharCode(mm.ch[gi]), gx * CW + CW / 2, gy * CH + CH / 2 + 1);
+      }
     }
     hudL.textContent = C.buildHud(world, cam, time).concat(C.mapHudLines(ex)).join('\n');
   }
