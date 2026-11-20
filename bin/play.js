@@ -25,7 +25,7 @@ function args() {
 const opt = args();
 const world = C.generateWorld({ seed: opt.seed === undefined ? 'aurora' : (isNaN(+opt.seed) ? opt.seed : +opt.seed), size: +opt.size || 288 });
 const cam = C.createCamera(world);
-let time = opt.time !== undefined ? +opt.time : 21;
+let time = opt.time !== undefined ? +opt.time : 12;
 const HUD_LINES = 6;
 
 const headless = opt.frames !== undefined || !process.stdout.isTTY;
@@ -62,7 +62,7 @@ function cleanup() {
 require('readline').emitKeypressEvents(process.stdin);
 process.stdin.setRawMode(true);
 let menu = null; // list of entries while the travel menu is open
-let colorOn = !!process.env.ASCII_SIM_COLOR; // C toggles; start in colour with ASCII_SIM_COLOR=1
+let colorOn = process.env.ASCII_SIM_COLOR !== "0"; // colour is the default; C toggles, ASCII_SIM_COLOR=0 starts in green phosphor
 const truecolor = /truecolor|24bit/i.test(process.env.COLORTERM || '');
 process.stdin.on('keypress', (str, key) => {
   if (!key) return;

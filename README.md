@@ -43,7 +43,7 @@ Stores are assigned with `hash2` only, so adding or tuning them never changes th
 (how bright), so colour is a lookup. `makePalette(hour)` blends day and night colours, `htmlRows(frame, pal)` returns one
 string of runs for a web page, and `ansiRows(frame, pal, truecolor)` returns terminal rows. Walls get one of six materials
 per building, lit windows, stars, signals and signs stay bright at night. Press C in the web page or terminal to toggle;
-`ASCII_SIM_COLOR=1 node bin/play.js` starts in colour, and `COLORTERM=truecolor` gives 24-bit colour (256-colour otherwise).
+colour is on by default (`ASCII_SIM_COLOR=0 node bin/play.js` starts in green phosphor), the clock starts at noon, and `COLORTERM=truecolor` gives 24-bit colour (256-colour otherwise).
 Colour is optional: the core and the plain-text path never need it.
 
 ## Suburbs
