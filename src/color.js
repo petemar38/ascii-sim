@@ -170,14 +170,16 @@ function htmlRows(frame, pal) {
 const cube = (v) => (v < 48 ? 0 : v < 115 ? 1 : Math.min(5, Math.floor((v - 35) / 40)));
 
 /** Rows with ANSI colour. truecolor: 24-bit codes; otherwise the nearest of the 256-colour cube. */
-function ansiRows(frame, pal, truecolor) {
+function ansiRows(frame, pal, truecolor, overlay) {
   const { cols, rows, ch } = frame;
   const code = (rgb, o, fg) => truecolor ? `\x1b[${fg ? 38 : 48};2;${rgb[o]};${rgb[o + 1]};${rgb[o + 2]}m`
     : `\x1b[${fg ? 38 : 48};5;${16 + 36 * cube(rgb[o]) + 6 * cube(rgb[o + 1]) + cube(rgb[o + 2])}m`;
   const res = [];
   for (let y = 0; y < rows; y++) {
     let line = '', cur = -1, curBg = -1;
-    for (let x = 0; x < cols; x++) {
+    const ovRow = overlay && y >= overlay.y0 && y < overlay.y0 + overlay.rows.length ? overlay.rows[y - overlay.y0] : null;
+    const xe = ovRow ? overlay.x0 : cols; // a map drawn over the right-hand end of these rows
+    for (let x = 0; x < xe; x++) {
       const i = y * cols + x, c = ch[i], bg = skyStep(frame, i);
       if (bg !== curBg) { line += bg >= 0 ? code(pal.sky.rgb, bg * 3, false) : '\x1b[49m'; curBg = bg; }
       if (c !== 32) {
@@ -186,7 +188,7 @@ function ansiRows(frame, pal, truecolor) {
       }
       line += String.fromCharCode(c);
     }
-    res.push(line + '\x1b[49m');
+    res.push(line + '\x1b[49m' + (ovRow || ''));
   }
   return res;
 }

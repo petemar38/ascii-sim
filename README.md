@@ -127,3 +127,12 @@ bluebird, hummingbird, downy woodpecker, wild turkey, and (at night) bats and ba
 wires, roofs, chimneys and playground frames, feed on the lawns, wheel over downtown, swoop over the parks and fly north in
 V formation. A bird is a small record and `birdPose(bird, t)` gives its position at clock time `t`, so the world stays
 deterministic: pass `clock` (seconds) to `render` to animate them (the web page and terminal player do this).
+
+## Minimap (M)
+
+`M` cycles three views: a local map centred on you (north up, a faint cone shows where you are facing), the whole world,
+and off. The world is a torus, so the local map just keeps scrolling when you cross the edge and draws the seam as a pink
+line passing under you; on the world map your marker leaves one edge and comes back on the opposite one. Ground you have
+walked near is lit and the rest stays dim, `S` marks where you started, and the HUD shows `LOOPS` (how many times you have
+gone round the world, e.g. `1E 0`) and `EXPLORED` (percent of walkable ground seen). API: `createExplorer`, `explore`,
+`exploreJump` (after a teleport), `buildMap`, `mapHtml`, `mapAnsi`, `mapPlain`, `mapHudLines`.

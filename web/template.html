@@ -27,6 +27,8 @@ pre { margin: 0; font-family: var(--mono); }
 #help { color: var(--dim); }
 #menu { position: absolute; left: 14px; top: 14px; margin: 0; padding: 10px 14px; font-size: 13px; line-height: 1.5; color: var(--accent);
   background: rgba(5, 10, 7, 0.88); border: 1px solid #2c5a3a; border-radius: 4px; text-shadow: none; z-index: 2; }
+#map { position: absolute; right: 10px; top: 10px; margin: 0; font-size: 9px; line-height: 1.2; white-space: pre; border: 1px solid #ffffff55; border-radius: 3px; text-shadow: none; z-index: 1; pointer-events: none; opacity: 0.94; }
+#map[hidden] { display: none; }
 #menu[hidden] { display: none; }
 #focus { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 10, 7, 0.55); color: var(--ink); font-size: 14px; cursor: pointer; }
 #focus[hidden] { display: none; }
@@ -37,10 +39,11 @@ pre { margin: 0; font-family: var(--mono); }
 <body>
 <div id="stage" tabindex="0" aria-label="ASCII city viewport">
   <pre id="screen" class="color" aria-hidden="true"></pre>
+  <pre id="map"></pre>
   <pre id="menu" hidden></pre>
   <div id="focus">Click to walk. W/S move, A/D strafe, arrows turn and look.</div>
 </div>
-<div id="hud"><pre id="hudL"></pre><pre id="help">W/S move  A/D strafe  arrows turn/look  Shift run  L buildings  , . time  N night/day  C color  F filler  [ ] detail</pre></div>
+<div id="hud"><pre id="hudL"></pre><pre id="help">W/S move  A/D strafe  arrows turn/look  Shift run  L buildings  , . time  N night/day  C color  M map  F filler  [ ] detail</pre></div>
 <pre id="probe">MMMMMMMMMM</pre>
 
 <script>
@@ -64,6 +67,10 @@ pre { margin: 0; font-family: var(--mono); }
   var focusEl = document.getElementById('focus');
   var probe = document.getElementById('probe');
   var menuEl = document.getElementById('menu');
+  var mapEl = document.getElementById('map');
+  var ex = C.createExplorer(world);
+  C.exploreJump(ex, cam);
+  var mapMode = 1; // M cycles: 0 off, 1 local (centred on you), 2 the whole world
   var menu = null; // list of entries while the travel menu is open
 
   var frame = null, cols = 0, rows = 0, fontPx = FONT, cellAspect = 2;
@@ -100,7 +107,7 @@ pre { margin: 0; font-family: var(--mono); }
   window.addEventListener('keydown', function (e) {
     if (menu) { // the menu is open: only its own keys do anything
       var n = parseInt(e.key, 10);
-      if (n >= 1 && n <= menu.length) { C.arriveAt(world, cam, menu[n - 1].store); closeMenu(); }
+      if (n >= 1 && n <= menu.length) { C.arriveAt(world, cam, menu[n - 1].store); C.exploreJump(ex, cam); closeMenu(); }
       else if (e.key === 'Escape' || e.key.toLowerCase() === 'l') closeMenu();
       e.preventDefault();
       return;
@@ -110,6 +117,7 @@ pre { margin: 0; font-family: var(--mono); }
     if (e.key === '[' || e.key === ']') { FONT = Math.max(MIN_FONT, Math.min(MAX_FONT, FONT + (e.key === '[' ? -1 : 1))); layout(); }
     if (e.key === ',') time = (time + 23.5) % 24;
     if (e.key === '.') time = (time + 0.5) % 24;
+    if (e.key.toLowerCase() === 'm') { mapMode = (mapMode + 1) % 3; mapEl.hidden = mapMode === 0; }
     if (e.key.toLowerCase() === 'c') { colorOn = !colorOn; screen.classList.toggle('color', colorOn); }
     if (e.key.toLowerCase() === 'f') filler = filler === 'sparse' ? 'solid' : 'sparse';
     if (e.key.toLowerCase() === 'n') time = time >= 6 && time < 18 ? 21 : 12;
@@ -131,13 +139,20 @@ pre { margin: 0; font-family: var(--mono); }
       look: (keys.arrowup ? 1 : 0) - (keys.arrowdown ? 1 : 0),
     };
     C.stepCamera(world, cam, input, dt, !!keys.shift);
+    C.explore(ex, cam);
     C.render(frame, world, cam, { time: time, cellAspect: cellAspect, filler: filler, clock: now / 1000 });
     if (colorOn) {
       var pk = Math.round(time * 4);
       if (pk !== palKey) { palKey = pk; pal = C.makePalette(time); }
       screen.innerHTML = C.htmlRows(frame, pal);
     } else screen.textContent = C.frameRows(frame).join('\n');
-    hudL.textContent = C.buildHud(world, cam, time).join('\n');
+    if (mapMode) {
+      var sr = stage.getBoundingClientRect(), wide = mapMode === 2;
+      var mcols = wide ? 96 : 49, mrows = wide ? 36 : 25;
+      mapEl.style.fontSize = Math.max(4, Math.min(9, (sr.width * (wide ? 0.6 : 0.4)) / (mcols * 0.6), (sr.height * 0.85) / (mrows * 1.2))).toFixed(2) + 'px';
+      mapEl.innerHTML = C.mapHtml(C.buildMap(world, ex, cam, wide ? 'world' : 'local', { cols: mcols, rows: mrows, blink: Math.floor(now / 400) % 2 === 0 }));
+    }
+    hudL.textContent = C.buildHud(world, cam, time).concat(C.mapHudLines(ex)).join('\n');
   }
   requestAnimationFrame(tick);
 })();

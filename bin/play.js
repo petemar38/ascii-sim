@@ -26,7 +26,7 @@ const opt = args();
 const world = C.generateWorld({ seed: opt.seed === undefined ? 'aurora' : (isNaN(+opt.seed) ? opt.seed : +opt.seed), size: +opt.size || 288 });
 const cam = C.createCamera(world);
 let time = opt.time !== undefined ? +opt.time : 12;
-const HUD_LINES = 6;
+const HUD_LINES = 8;
 
 const headless = opt.frames !== undefined || !process.stdout.isTTY;
 
@@ -62,13 +62,16 @@ function cleanup() {
 require('readline').emitKeypressEvents(process.stdin);
 process.stdin.setRawMode(true);
 let menu = null; // list of entries while the travel menu is open
+const ex = C.createExplorer(world);
+C.exploreJump(ex, cam);
+let mapMode = 1; // M cycles: 0 off, 1 local (centred on you), 2 the whole world
 let colorOn = process.env.ASCII_SIM_COLOR !== "0"; // colour is the default; C toggles, ASCII_SIM_COLOR=0 starts in green phosphor
 const truecolor = /truecolor|24bit/i.test(process.env.COLORTERM || '');
 process.stdin.on('keypress', (str, key) => {
   if (!key) return;
   if (menu) {
     const n = parseInt(str, 10);
-    if (n >= 1 && n <= menu.length) { C.arriveAt(world, cam, menu[n - 1].store); menu = null; held.clear(); }
+    if (n >= 1 && n <= menu.length) { C.arriveAt(world, cam, menu[n - 1].store); C.exploreJump(ex, cam); menu = null; held.clear(); }
     else if (key.name === 'escape' || str === 'l' || str === 'L') menu = null;
     else if (key.ctrl && key.name === 'c') return cleanup();
     process.stdout.write('\x1b[2J');
@@ -76,6 +79,7 @@ process.stdin.on('keypress', (str, key) => {
   }
   if (str === 'l' || str === 'L') { menu = C.nearestStores(world, cam, 9); held.clear(); process.stdout.write('\x1b[2J'); return; }
   if (key.name === 'escape' || (key.name === 'q') || (key.ctrl && key.name === 'c')) return cleanup();
+  if (str === 'm' || str === 'M') { mapMode = (mapMode + 1) % 3; process.stdout.write('\x1b[2J'); return; }
   if (str === 'c' || str === 'C') { colorOn = !colorOn; process.stdout.write('\x1b[2J'); return; }
   if (str === ',') time = (time + 23.5) % 24;
   else if (str === '.') time = (time + 0.5) % 24;
@@ -103,9 +107,18 @@ setInterval(() => {
   };
   const run = [...held.keys()].some((k) => k.endsWith('+shift'));
   if (!menu) C.stepCamera(world, cam, input, dt, run);
+  C.explore(ex, cam);
   C.render(frame, world, cam, { time, clock: now / 1000 });
   const useColor = colorOn && !menu; // the travel menu is drawn as plain text over the view
-  const rowsOut = useColor ? C.ansiRows(frame, C.makePalette(time), truecolor) : C.frameRows(frame);
+  let overlay = null, mm = null;
+  if (mapMode && !menu) {
+    const mc = mapMode === 1 ? Math.max(15, Math.min(49, (Math.floor(cols * 0.38) | 1))) : Math.max(20, Math.min(96, cols - 2));
+    const mr = mapMode === 1 ? Math.max(8, Math.min(25, Math.floor(rows * 0.6))) : Math.max(10, Math.min(36, rows - 2));
+    mm = C.buildMap(world, ex, cam, mapMode === 1 ? 'local' : 'world', { cols: mc, rows: mr, blink: Math.floor(now / 400) % 2 === 0 });
+    overlay = { x0: cols - mc, y0: 0, rows: useColor ? C.mapAnsi(mm, truecolor) : C.mapPlain(mm) };
+  }
+  const rowsOut = useColor ? C.ansiRows(frame, C.makePalette(time), truecolor, overlay) : C.frameRows(frame);
+  if (overlay && !useColor) overlay.rows.forEach((t, i) => { if (i < rowsOut.length) rowsOut[i] = rowsOut[i].slice(0, overlay.x0) + t; });
   if (menu) { // draw the travel menu over the top-left of the view
     const lines = ['NEAREST BUILDINGS  (1-9 go there, L or Esc closes)', ''].concat(C.travelMenuLines(menu));
     lines.forEach((t, i) => {
@@ -114,6 +127,6 @@ setInterval(() => {
       rowsOut[i + 1] = ' ' + ('  ' + t).padEnd(w).slice(0, w) + rowsOut[i + 1].slice(w + 1);
     });
   }
-  const hud = C.buildHud(world, cam, time);
+  const hud = C.buildHud(world, cam, time).concat(C.mapHudLines(ex));
   process.stdout.write('\x1b[H\x1b[32m' + rowsOut.join('\n') + '\x1b[32m\n' + '-'.repeat(cols) + '\n' + hud.join('\n') + '\x1b[0m');
 }, 33);
