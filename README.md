@@ -37,6 +37,15 @@ a sign you can read from a few tiles away. Most kinds also have a distinctive ro
 dome, cross, sign) so you can tell them apart from far away. A test fails if two kinds ever look alike.
 Stores are assigned with `hash2` only, so adding or tuning them never changes the road layout.
 
+## Suburbs
+
+Away from downtown the city thins out into suburban districts (`D.SUBURB`). Blocks there hold detached houses in six
+styles (`HOUSE`: ranch, colonial, bungalow, tudor, modern, victorian). Each has its own front (garage door, shutters,
+porch, half-timbering, glass wall, arches) and its own roof piece, with a lawn (`K.YARD`), a driveway and a front path
+from the sidewalk. Some blocks are playground parks (swings, slide, jungle gym, seesaw: `PROP.PLAY`, solid for collision),
+and some are schools with a field and play area behind them; those are real `SCHOOL` stores, so they show up in the L list.
+`world.houses` maps each house's front-wall tiles to `{style, face, door, garage, floors}`.
+
 ## Finding buildings
 
 `nearestStores(world, cam, 9)` lists the nearest named buildings (distance in metres and compass direction),
@@ -48,11 +57,11 @@ front of one, looking at its sign. In the web page and terminal player, press **
 The map is a torus: walk off one edge and you arrive on the opposite one, and you can see straight
 through the seam. The generator lays roads, blocks and districts out periodically (the seam runs through
 quiet residential and parkland outskirts, far from downtown), and every lookup (`heightAt`, `kindAt`,
-`isWalkable`, `locate`, collision, sprites, wires, lamp glow) wraps. Default size is 192 tiles; sizes are
+`isWalkable`, `locate`, collision, sprites, wires, lamp glow) wraps. Default size is 288 tiles; sizes are
 rounded to a multiple of 24 so everything stays periodic. View distance is 56 tiles, well under the map
 width, so you never see the same buildings twice.
 
-    generateWorld({ seed: 'aurora', size: 192 })               // wraps (default)
+    generateWorld({ seed: 'aurora' })                          // 288 tiles, wraps (default)
     generateWorld({ seed: 'aurora', size: 192, wrap: false })  // walled map, same city
 
 Use `wrapDelta(world, d)` for the shortest signed difference between two coordinates and

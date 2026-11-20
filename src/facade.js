@@ -115,4 +115,75 @@ function shopCell(kind, center, u, vf, fl) {
   return 0;
 }
 
-module.exports = { shopCell, TONES };
+/**
+ * House fronts. One call per wall cell on the street side of a house.
+ *   houseCell(style, isDoor, isGarage, u, vf, fl) -> glyph code (0 = plain wall); sets houseCell.tone / houseCell.glass
+ * Styles follow world.HOUSE: 1 ranch, 2 colonial, 3 bungalow, 4 tudor, 5 modern, 6 victorian.
+ */
+const SLASH = 47, BACK = 92, COLON = 58, QUOTE = 34;
+function hout(glyph, tone, glass) { houseCell.tone = tone || 0; houseCell.glass = glass || 0; return glyph; }
+function houseCell(style, isDoor, isGarage, u, vf, fl) {
+  houseCell.tone = 0; houseCell.glass = 0;
+  const door = (lo, hi, top) => isDoor && between(lo, u, hi) && fl === 0 && vf < top;
+  const garageDoor = isGarage && fl === 0 && between(0.08, u, 0.92) && vf < 0.62;
+  if (garageDoor) return hout(((Math.floor(vf * 20) & 1) ? EQ : DASH), TONES.DOOR);
+  switch (style) {
+    case 1: // ranch: one wide low storey, picture window, low roof
+      if (door(0.35, 0.65, 0.66)) return hout((u < 0.4 || u > 0.6) ? PIPE : SPACE, TONES.DOOR);
+      if (fl === 0 && !isDoor && vf > 0.22 && vf < 0.68 && between(0.12, u, 0.88)) return hout(0, 0, 1);
+      if (fl === 0 && isDoor && vf > 0.3 && vf < 0.62 && (between(0.08, u, 0.28) || between(0.72, u, 0.92))) return hout(0, 0, 1);
+      break;
+    case 2: // colonial: symmetric windows with shutters, columns by the door
+      if (door(0.38, 0.62, 0.62)) return hout((u < 0.42 || u > 0.58) ? PIPE : SPACE, TONES.DOOR);
+      if (isDoor && fl === 0 && (Math.abs(u - 0.2) < 0.03 || Math.abs(u - 0.8) < 0.03) && vf < 0.78) return hout(PIPE, TONES.COLUMN);
+      if (!isDoor && vf > 0.28 && vf < 0.74) {
+        if (Math.abs(u - 0.2) < 0.045 || Math.abs(u - 0.8) < 0.045) return hout(PIPE, TONES.AWNING); // shutters
+        if (between(0.3, u, 0.7)) return hout(0, 0, 1);
+      }
+      if (isDoor && fl === 1 && vf > 0.28 && vf < 0.74 && between(0.36, u, 0.64)) return hout(0, 0, 1);
+      break;
+    case 3: // bungalow: deep front porch with square columns
+      if (fl === 0) {
+        if (vf >= 0.7 && vf < 0.82) return hout(EQ, TONES.AWNING); // porch roof
+        if (vf < 0.7 && (Math.abs(u - 0.08) < 0.04 || Math.abs(u - 0.92) < 0.04)) return hout(PIPE, TONES.COLUMN);
+        if (vf < 0.12) return hout(UNDER, TONES.COLUMN); // porch step
+        if (door(0.4, 0.6, 0.58)) return hout((u < 0.44 || u > 0.56) ? PIPE : SPACE, TONES.DOOR);
+        if (!isDoor && vf > 0.22 && vf < 0.6 && between(0.25, u, 0.75)) return hout(0, 0, 1);
+      }
+      break;
+    case 4: // tudor: half-timbering on the upper storey, steep roof
+      if (door(0.4, 0.6, 0.6)) return hout((u < 0.44 || u > 0.56) ? PIPE : SPACE, TONES.DOOR);
+      if (door(0.4, 0.6, 0.7)) return hout(CARET, TONES.COLUMN); // pointed lintel
+      if (fl === 1) {
+        if (Math.abs(vf - 0.5) < 0.05) return hout(DASH, TONES.COLUMN);
+        if (u < 0.06 || u > 0.94 || Math.abs(u - 0.5) < 0.04) return hout(PIPE, TONES.COLUMN);
+        if (vf > 0.55 && Math.abs(u - 0.25) < 0.12 * (vf - 0.45) * 4) return hout(((u < 0.25) ? BACK : SLASH), TONES.COLUMN);
+        if (vf > 0.2 && vf < 0.44 && (between(0.14, u, 0.4) || between(0.6, u, 0.86))) return hout(0, 0, 1);
+      } else if (!isDoor && vf > 0.25 && vf < 0.62 && between(0.25, u, 0.75)) return hout(0, 0, 1);
+      break;
+    case 5: // modern: slab door, floor-to-ceiling glass, flat roof line
+      if (door(0.42, 0.58, 0.62)) return hout(PIPE, TONES.DOOR);
+      if (fl === 0 && vf > 0.1 && vf < 0.78 && between(0.04, u, 0.96) && !isGarage) return hout(0, 0, 1);
+      if (fl === 1 && vf > 0.3 && vf < 0.7) return hout(0, 0, 1); // ribbon window
+      if (vf > 0.9) return hout(EQ, TONES.COLUMN);
+      break;
+    case 6: // victorian: tall, wraparound porch with balusters, arched windows, attic round window
+      if (fl === 0) {
+        if (vf >= 0.55 && vf < 0.66) return hout(EQ, TONES.AWNING); // porch roof
+        if (vf < 0.3 && ((Math.floor(u * 14) & 1) === 0)) return hout(PIPE, TONES.COLUMN); // balusters
+        if (vf < 0.55 && (u < 0.05 || u > 0.95)) return hout(PIPE, TONES.COLUMN);
+        if (door(0.4, 0.6, 0.55)) return hout((u < 0.44 || u > 0.56) ? PIPE : SPACE, TONES.DOOR);
+      } else if (fl === 1) {
+        if (vf > 0.2 && vf < 0.62 && between(0.3, u, 0.7)) return hout(0, 0, 1);
+        if (vf >= 0.62 && vf < 0.74 && between(0.3, u, 0.7)) return hout(CARET, TONES.COLUMN); // arch
+      } else if (fl === 2) {
+        const dx = (u - 0.5) / 0.16, dy = (vf - 0.5) / 0.3;
+        if (dx * dx + dy * dy < 1) return hout(0, 0, 1);
+      }
+      break;
+    default: break;
+  }
+  return 0;
+}
+
+module.exports = { shopCell, houseCell, TONES };

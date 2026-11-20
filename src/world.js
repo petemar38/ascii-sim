@@ -20,9 +20,9 @@
 const { mulberry32, hash2, toSeed } = require('./rng');
 const { makeNamer } = require('./names');
 
-const K = { NONE: 0, ROAD: 1, SIDEWALK: 2, PARK: 3, BUILDING: 4, PLAZA: 5 };
-const D = { DOWNTOWN: 0, COMMERCIAL: 1, RESIDENTIAL: 2, INDUSTRIAL: 3, PARKLAND: 4 };
-const DISTRICT_TYPE_NAMES = ['downtown', 'commercial', 'residential', 'industrial', 'parkland'];
+const K = { NONE: 0, ROAD: 1, SIDEWALK: 2, PARK: 3, BUILDING: 4, PLAZA: 5, YARD: 6 };
+const D = { DOWNTOWN: 0, COMMERCIAL: 1, RESIDENTIAL: 2, INDUSTRIAL: 3, PARKLAND: 4, SUBURB: 5 };
+const DISTRICT_TYPE_NAMES = ['downtown', 'commercial', 'residential', 'industrial', 'parkland', 'suburb'];
 
 /** Road paint. v = vertical road (runs north-south), h = horizontal road (runs east-west). */
 const ROAD_MARK = { NONE: 0, V_CENTER: 1, V_LEFT: 2, V_RIGHT: 3, H_CENTER: 4, H_TOP: 5, H_BOTTOM: 6 };
@@ -30,17 +30,20 @@ const ROAD_MARK = { NONE: 0, V_CENTER: 1, V_LEFT: 2, V_RIGHT: 3, H_CENTER: 4, H_
 /** Kinds of shops and public buildings. STORE_SIGN is the text painted on the sign (8 characters at most). */
 const STORE = { GROCERY: 1, LIBRARY: 2, PHARMACY: 3, DINER: 4, BANK: 5, HOTEL: 6, SCHOOL: 7, FIREHALL: 8, CHURCH: 9, HARDWARE: 10 };
 const STORE_SIGN = ['', 'GROCERY', 'LIBRARY', 'PHARMACY', 'DINER', 'BANK', 'HOTEL', 'SCHOOL', 'FIREHALL', 'CHURCH', 'HARDWARE'];
+/** Styles of suburban houses (the facade and the roof both follow the style). */
+const HOUSE = { RANCH: 1, COLONIAL: 2, BUNGALOW: 3, TUDOR: 4, MODERN: 5, VICTORIAN: 6 };
+const HOUSE_FLOORS = [0, 1, 2, 1, 2, 2, 3];
 /** Which face of a building carries its storefront (the direction the face looks towards). */
 const FACE = { N: 1, S: 2, W: 3, E: 4 };
 
 /** Solid footprint radius (tiles) of props that block walking. Rooftop props and wires are not solid. */
-const PROP_RADIUS = { 1: 0.07, 2: 0.11, 3: 0.07, 4: 0.09, 5: 0.08 }; // lamp, tree trunk, signal, hydrant, pole
+const PROP_RADIUS = { 1: 0.07, 2: 0.11, 3: 0.07, 4: 0.09, 5: 0.08, 10: 0.2 }; // lamp, tree trunk, signal, hydrant, pole, playground equipment
 
 /** Anything outside the map reads as a tall boundary wall. */
 const EDGE_HEIGHT = 90;
 
 /** Street furniture ("props"): standing objects drawn as sprites. */
-const PROP = { LAMP: 1, TREE: 2, SIGNAL: 3, HYDRANT: 4, POLE: 5, TANK: 6, ANTENNA: 7, STEEPLE: 8, ROOFPIECE: 9 };
+const PROP = { LAMP: 1, TREE: 2, SIGNAL: 3, HYDRANT: 4, POLE: 5, TANK: 6, ANTENNA: 7, STEEPLE: 8, ROOFPIECE: 9, PLAY: 10 };
 /** deco[]: crosswalk on a road tile, named for the intersection arm it sits on. */
 const DECO = { NONE: 0, CROSS_N: 1, CROSS_S: 2, CROSS_W: 3, CROSS_E: 4, MANHOLE: 5 };
 
@@ -51,7 +54,7 @@ function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
  */
 function generateWorld(opts = {}) {
   /* a multiple of 24 keeps noise cells (8) and pole spacing (12) periodic across the wrap seam */
-  const size = Math.max(48, Math.round((opts.size || 192) / 24) * 24);
+  const size = Math.max(48, Math.round((opts.size || 288) / 24) * 24);
   const wrap = opts.wrap !== false;
   const seedValue = toSeed(opts.seed === undefined ? 'aurora' : opts.seed);
   const rng = mulberry32(seedValue);
@@ -74,6 +77,15 @@ function generateWorld(opts = {}) {
     districts.push({ type: t, cx: size * (0.15 + rng() * 0.7), cy: size * (0.15 + rng() * 0.7) });
   }
   /* the wrap seam runs through quiet residential and parkland outskirts, far from downtown */
+  /* suburbs: a few seeds well away from downtown */
+  for (let i = 0, nSub = Math.max(3, Math.round(size / 40)); i < nSub; i++) {
+    let cx = 0, cy = 0;
+    for (let tries = 0; tries < 40; tries++) {
+      cx = size * (0.05 + rng() * 0.9); cy = size * (0.05 + rng() * 0.9);
+      if (Math.hypot(wd(cx - districts[0].cx), wd(cy - districts[0].cy)) > size * 0.28) break;
+    }
+    districts.push({ type: D.SUBURB, cx, cy });
+  }
   districts.push({ type: D.RESIDENTIAL, cx: 0, cy: size * 0.27 }, { type: D.PARKLAND, cx: 0, cy: size * 0.73 },
                  { type: D.RESIDENTIAL, cx: size * 0.27, cy: 0 }, { type: D.PARKLAND, cx: size * 0.73, cy: 0 });
   for (const d of districts) d.name = namer.district(DISTRICT_TYPE_NAMES[d.type]);
@@ -180,13 +192,13 @@ function generateWorld(opts = {}) {
     }
   }
 
-  function placeBuilding(x0, y0, x1, y1, type) {
+  function placeBuilding(x0, y0, x1, y1, type, forceH) {
     if (x1 - x0 < 2 || y1 - y0 < 2) return;
     const id = nextBid++ % 65535 + 1;
-    let h = pickHeight(type, (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) * (y1 - y0));
+    let h = forceH || pickHeight(type, (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) * (y1 - y0));
     // keep the wrap-around seam quiet: nothing tall within 12 tiles of it, so it is hard to spot
-    const sx = Math.min(mod(x0), size - mod(x1 - 1)), sy = Math.min(mod(y0), size - mod(y1 - 1));
-    if (Math.min(sx, sy) < 12) h = Math.min(h, 6);
+    const seamDist = (a0, a1) => { const m0 = mod(a0), m1 = mod(a1 - 1); return m1 < m0 ? 0 : Math.min(m0, size - 1 - m1); }; // 0 when the lot straddles the seam
+    if (Math.min(seamDist(x0, x1), seamDist(y0, y1)) < 12) h = Math.min(h, 6);
     buildings.push({ id, x0, y0, x1, y1, h, type });
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
@@ -229,6 +241,82 @@ function generateWorld(opts = {}) {
     }
   }
 
+  /* ---- suburbs: detached houses with front yards, driveways, the odd playground and school ---- */
+  const houses = new Map();   // front-wall tile -> {style, face, door, garage, floors, i}
+  const playProps = [], roofProps = [], pendingSchools = [];
+  function scatterPlay(x0, y0, x1, y1, n) {
+    const mine = [];
+    for (let tries = 0; tries < n * 12 && mine.length < n; tries++) {
+      const x = x0 + 0.7 + rng() * (x1 - x0 - 1.4), y = y0 + 0.7 + rng() * (y1 - y0 - 1.4);
+      if (mine.some((q) => Math.hypot(q.x - x, q.y - y) < 1.5)) continue;
+      mine.push({ x: mod(x), y: mod(y), type: PROP.PLAY, v: Math.floor(rng() * 4) });
+    }
+    for (const p of mine) playProps.push(p);
+  }
+  function suburbBlock(ix0, iy0, ix1, iy1) {
+    const W = ix1 - ix0, H = iy1 - iy0;
+    for (let y = iy0; y < iy1; y++) for (let x = ix0; x < ix1; x++) kind[idx(x, y)] = K.YARD;
+    const roll = rng();
+    if (roll < 0.08 && W >= 6 && H >= 7) { // a school: long low building on the street, playground and field behind
+      placeBuilding(ix0, iy0, ix1, iy0 + 3, D.SUBURB, 2);
+      pendingSchools.push(buildings[buildings.length - 1]);
+      scatterPlay(ix0, iy0 + 3, ix1, iy1, 3 + Math.floor(rng() * 3));
+      return;
+    }
+    if (roll < 0.18 && W >= 4 && H >= 4) { // a playground park
+      for (let y = iy0; y < iy1; y++) for (let x = ix0; x < ix1; x++) kind[idx(x, y)] = K.PARK;
+      scatterPlay(ix0, iy0, ix1, iy1, 3 + Math.floor(W * H / 14));
+      return;
+    }
+    const alongX = W >= H, L = alongX ? W : H, Dd = alongX ? H : W;
+    const rowDepths = Dd >= 6 ? [Dd >> 1, Dd - (Dd >> 1)] : [Dd];
+    let off = 0;
+    rowDepths.forEach((rd, ri) => {
+      const frontLow = rowDepths.length === 2 ? ri === 0 : rng() < 0.5; // the street this row of houses faces
+      let c = 0;
+      while (c <= L - 3) {
+        let lw = 3 + Math.floor(rng() * 3);
+        if (c + lw > L) lw = L - c;
+        if (lw < 3) break;
+        let hw = lw >= 5 ? 3 + (rng() < 0.5 ? 1 : 0) : lw - 1;
+        hw = Math.max(2, Math.min(hw, lw));
+        const a0 = c + Math.floor(rng() * (lw - hw + 1));
+        const hd = rd >= 5 ? 2 + Math.floor(rng() * 2) : Math.max(2, rd - 1);
+        const fy = Math.min(rd - hd, 1 + (rd - hd - 1 > 1 && rng() < 0.5 ? 1 : 0));
+        c += lw;
+        if (hd < 2 || fy < 1) continue;
+        const cross0 = frontLow ? off + fy : off + rd - fy - hd;
+        const x0 = alongX ? ix0 + a0 : ix0 + cross0, y0 = alongX ? iy0 + cross0 : iy0 + a0;
+        const x1 = alongX ? x0 + hw : x0 + hd, y1 = alongX ? y0 + hd : y0 + hw;
+        // style: big lots get big houses
+        const pool = hw >= 4 ? [2, 4, 6, 6] : [1, 1, 2, 2, 3, 3, 4, 5, 5, 6];
+        const style = pool[Math.floor(rng() * pool.length)];
+        const floors = HOUSE_FLOORS[style];
+        const garage = (style === HOUSE.RANCH || style === HOUSE.MODERN || (style === HOUSE.COLONIAL && rng() < 0.5)) && hw >= 2;
+        const garageK = garage ? (rng() < 0.5 ? 0 : hw - 1) : -1;
+        const doorK = garage ? (garageK === 0 ? hw - 1 : 0) : (hw >> 1);
+        placeBuilding(x0, y0, x1, y1, D.SUBURB, floors);
+        const face = alongX ? (frontLow ? FACE.N : FACE.S) : (frontLow ? FACE.W : FACE.E);
+        const crossFront = frontLow ? cross0 : cross0 + hd - 1;
+        for (let k = 0; k < hw; k++) {
+          const tx = alongX ? ix0 + a0 + k : ix0 + crossFront, ty = alongX ? iy0 + crossFront : iy0 + a0 + k;
+          houses.set(idx(tx, ty), { style, face, door: doorK, garage: garageK, floors, i: k, hw });
+        }
+        for (const k of [doorK, garageK]) { // driveway and front path run from the sidewalk to the house
+          if (k < 0) continue;
+          for (let s = 0; s < fy; s++) {
+            const cr = frontLow ? off + s : off + rd - 1 - s;
+            kind[idx(alongX ? ix0 + a0 + k : ix0 + cr, alongX ? iy0 + cr : iy0 + a0 + k)] = K.SIDEWALK;
+          }
+        }
+        const rx = (x0 + x1) / 2, ry = (y0 + y1) / 2;
+        roofProps.push({ x: mod(rx), y: mod(ry), type: PROP.ROOFPIECE, v: floors, k: 100 + style, w: (hw + hd) / 2 });
+        if (style !== HOUSE.MODERN && rng() < 0.65) roofProps.push({ x: mod(rx + (rng() - 0.5) * (x1 - x0 - 1)), y: mod(ry + (rng() - 0.5) * (y1 - y0 - 1)), type: PROP.ROOFPIECE, v: floors, k: 190 });
+      }
+      off += rd;
+    });
+  }
+
   for (const [bx0, bx1] of xGaps) {
     for (const [by0, by1] of yGaps) {
       for (let y = by0; y < by1; y++) for (let x = bx0; x < bx1; x++) kind[idx(x, y)] = K.SIDEWALK;
@@ -238,13 +326,16 @@ function generateWorld(opts = {}) {
       const type = districts[district[idx(cx, cy)]].type;
       const roll = rng();
       let use = 'buildings';
-      if (type === D.PARKLAND) use = roll < 0.7 ? 'park' : roll < 0.9 ? 'plaza' : 'buildings';
+      if (type === D.SUBURB) use = 'suburb';
+      else if (type === D.PARKLAND) use = roll < 0.7 ? 'park' : roll < 0.9 ? 'plaza' : 'buildings';
       else if (type === D.DOWNTOWN) use = roll < 0.1 ? 'plaza' : 'buildings';
       else use = roll < 0.08 ? 'park' : 'buildings';
 
       if (use === 'park' || use === 'plaza') {
         const k = use === 'park' ? K.PARK : K.PLAZA;
         for (let y = iy0; y < iy1; y++) for (let x = ix0; x < ix1; x++) kind[idx(x, y)] = k;
+      } else if (use === 'suburb') {
+        suburbBlock(ix0, iy0, ix1, iy1);
       } else {
         subdivide(ix0, iy0, ix1, iy1, type, rng());
       }
@@ -346,6 +437,10 @@ function generateWorld(opts = {}) {
     b.store = rec;
   }
 
+  for (const b of pendingSchools) { // suburban schools: the building was placed on purpose, so it gets its storefront first
+    const e = bestFace(b);
+    if (e) makeStore(b, S.SCHOOL, e);
+  }
   for (const b of buildings) { // random assignment
     const mix = MIX[b.type];
     if (!mix || sh(b.id, 1, 0x4d) >= mix.p) continue;
@@ -419,7 +514,9 @@ function generateWorld(opts = {}) {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const k = kind[idx(x, y)];
-      if (k === K.PARK) {
+      if (k === K.YARD) {
+        if (h01(x, y, 0x7ef) < 0.07) props.push({ x: x + 0.2 + 0.6 * h01(x, y, 0x13), y: y + 0.2 + 0.6 * h01(x, y, 0x24), type: PROP.TREE, v: 0 });
+      } else if (k === K.PARK) {
         if (h01(x, y, 0x7ee) < 0.16) props.push({ x: x + 0.2 + 0.6 * h01(x, y, 0x11), y: y + 0.2 + 0.6 * h01(x, y, 0x22), type: PROP.TREE, v: 0 });
       } else if (k === K.SIDEWALK) {
         if (frontage.has(idx(x, y))) continue;
@@ -443,6 +540,8 @@ function generateWorld(opts = {}) {
       }
     }
   }
+  for (const p of playProps) props.push(p);
+  for (const p of roofProps) props.push(p);
   /* utility wires between neighbouring poles on the same street */
   const wires = [];
   for (const [key, a] of poles) {
@@ -490,7 +589,7 @@ function generateWorld(opts = {}) {
   }
 
   return {
-    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, propGrid, stores, shops, facades,
+    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, propGrid, stores, shops, facades, houses,
     districts, vRoads, hRoads, spawn, landmarks,
   };
 }
@@ -600,6 +699,6 @@ function worldHash(world) {
 }
 
 module.exports = {
-  K, D, DISTRICT_TYPE_NAMES, ROAD_MARK, EDGE_HEIGHT, PROP, DECO,
+  K, D, DISTRICT_TYPE_NAMES, HOUSE, ROAD_MARK, EDGE_HEIGHT, PROP, DECO,
   generateWorld, inBounds, heightAt, kindAt, isWalkable, locate, worldHash, propClearance, PROP_RADIUS, wrapCoord, wrapDelta, STORE, STORE_SIGN, FACE,
 };

@@ -91,3 +91,34 @@ test('shops can be told apart from far away by their rooftops', () => {
   const kinds = new Set(w.props.filter((p) => p.type === C.PROP.ROOFPIECE).map((p) => p.k));
   for (const k of [C.STORE.FIREHALL, C.STORE.SCHOOL, C.STORE.LIBRARY, C.STORE.HOTEL, C.STORE.PHARMACY, C.STORE.DINER, C.STORE.BANK]) assert.ok(kinds.has(k), 'no rooftop piece for ' + C.STORE_SIGN[k]);
 });
+
+test('suburbs: houses in several styles, with yards, driveways, playgrounds and a school with grounds', () => {
+  const big = C.generateWorld({ seed: 'aurora' });
+  const suburbs = big.districts.filter((d) => d.type === C.D.SUBURB);
+  assert.ok(suburbs.length >= 3, 'no suburban districts');
+  const styles = new Set([...big.houses.values()].map((h) => h.style));
+  assert.strictEqual(styles.size, 6, 'not every house style appears');
+  const count = (k) => { let n = 0; for (let i = 0; i < big.kind.length; i++) if (big.kind[i] === k) n++; return n; };
+  assert.ok(count(C.K.YARD) > 3000, 'too few yard tiles: ' + count(C.K.YARD));
+  const play = big.props.filter((p) => p.type === C.PROP.PLAY);
+  assert.ok(play.length >= 20, 'few playground pieces: ' + play.length);
+  assert.strictEqual(new Set(play.map((p) => p.v)).size, 4, 'every kind of playground equipment should appear');
+  assert.ok(big.stores.filter((s) => s.kind === C.STORE.SCHOOL).length >= 3);
+  // every house front is a building tile with a yard or driveway (never a wall of another building) in front of it
+  const n = big.size, out = { 1: [0, -1], 2: [0, 1], 3: [-1, 0], 4: [1, 0] };
+  for (const [t, h] of big.houses) {
+    assert.strictEqual(big.kind[t], C.K.BUILDING);
+    const tx = t % n, ty = (t / n) | 0, [dx, dy] = out[h.face];
+    const fk = big.kind[(((ty + dy) % n + n) % n) * n + ((tx + dx) % n + n) % n];
+    assert.ok(fk === C.K.YARD || fk === C.K.SIDEWALK, 'a house front looks at kind ' + fk);
+  }
+});
+test('you can walk across a front yard but not through a house or a swing set', () => {
+  const big = C.generateWorld({ seed: 'aurora' });
+  const yard = [...Array(big.size * big.size).keys()].find((i) => big.kind[i] === C.K.YARD && big.props.every((p) => Math.floor(p.y) * big.size + Math.floor(p.x) !== i));
+  assert.ok(C.isWalkable(big, (yard % big.size) + 0.5, ((yard / big.size) | 0) + 0.5));
+  const swing = big.props.find((p) => p.type === C.PROP.PLAY);
+  assert.ok(C.propClearance(big, swing.x, swing.y, 0.22) < 0, 'a swing set should be solid');
+  const [t] = [...big.houses.keys()];
+  assert.ok(!C.isWalkable(big, (t % big.size) + 0.5, ((t / big.size) | 0) + 0.5));
+});

@@ -28,7 +28,8 @@ test('rendering is seamless: a camera one map-width away sees exactly the same f
   }
 });
 test('the view across the seam is continuous: stepping over it changes the frame only slightly', () => {
-  const cam = { x: w.size - 0.3, y: 40.5, angle: 0, pitch: 0.06, eyeZ: 0.21 };
+  const street = w.hRoads[0];
+  const cam = { x: w.size - 0.3, y: street.pos + street.w / 2, angle: 0, pitch: 0.06, eyeZ: 0.21 }; // down a street, so nothing blocks the step
   const before = C.createFrame(90, 30), after = C.createFrame(90, 30);
   C.render(before, w, cam, { time: 12 });
   C.stepCamera(w, cam, { forward: 1, strafe: 0, turn: 0, look: 0 }, 0.1, false); // 0.32 tiles: crosses x = size

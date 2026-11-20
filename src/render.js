@@ -13,7 +13,7 @@
 
 const { hash2 } = require('./rng');
 const { K, ROAD_MARK, EDGE_HEIGHT, PROP, DECO, STORE } = require('./world');
-const { shopCell } = require('./facade');
+const { shopCell, houseCell } = require('./facade');
 
 const FLOOR_H = 0.4; // one floor, in tiles (a tile is ~8 m, so ~3.2 m per floor)
 const WINDOWS_PER_TILE = 3;
@@ -184,6 +184,8 @@ function render(frame, world, cam, opts = {}) {
             break;
           case K.PARK:
             b = 0.30 + 0.16 * (hash2(Math.floor(px * 3), Math.floor(py * 3), seed) / 4294967296); tn = TONE.PARK; parkHash = hash2(Math.floor(px * 3), Math.floor(py * 3), seed ^ 77); break;
+          case K.YARD:
+            b = 0.32 + 0.10 * (hash2(Math.floor(px * 3), Math.floor(py * 3), seed) / 4294967296); tn = TONE.PARK; parkHash = hash2(Math.floor(px * 3), Math.floor(py * 3), seed ^ 91); break;
           case K.PLAZA:
             b = ((Math.floor(px * 2) + Math.floor(py * 2)) & 1) ? 0.52 : 0.42; tn = TONE.PLAZA; break;
           default:
@@ -248,11 +250,13 @@ function render(frame, world, cam, opts = {}) {
         const fineV = rowsPerFloor >= 1.7, fineH = colsPerTile >= 7;
         /* fire escape on some facades: platforms every floor, rails at the sides, a diagonal stair */
         const shop = !oob && world.facades ? world.facades.get(t) : undefined; // any tile on a shop's street wall
-        const escOn = !shop && !oob && fineV && f > 0.2 && h >= 4 && h <= 18 && hash2(wx0 * 5 + side, wy0 * 3, seed ^ 0xfe) / 4294967296 < 0.06;
+        const house = !oob && world.houses ? world.houses.get(t) : undefined; // front-wall tile of a suburban house
+        const escOn = !shop && !house && !oob && fineV && f > 0.2 && h >= 4 && h <= 18 && hash2(wx0 * 5 + side, wy0 * 3, seed ^ 0xfe) / 4294967296 < 0.06;
 
         /* storefront: only on the one face of a shop building that looks onto the street */
         const hitFace = side === 0 ? (stepX > 0 ? 3 : 4) : (stepY > 0 ? 1 : 2); // which face of the tile this ray hit (matches world FACE)
         const storefront = shop !== undefined && shop.face === hitFace && fineV && f > 0.22;
+        const houseFront = house !== undefined && house.face === hitFace && fineV && f > 0.22 ;
         const flip = hitFace === 1 || hitFace === 4; // read signs left to right as seen from the street
         const uu = flip ? 1 - wx : wx;
         const isCenter = storefront && shop.anchorTile === t; // door and sign live on the middle tile
@@ -275,7 +279,7 @@ function render(frame, world, cam, opts = {}) {
           } else {
             const inV = fineV ? (vf > 0.22 && vf < 0.78) : (vf > 0.12 && vf < 0.88);
             const inH = fineH ? (wf > 0.2 && wf < 0.8) : true;
-            const shopFloor = storefront && fl <= 1;
+            const shopFloor = (storefront && fl <= 1) || (houseFront && fl < house.floors);
             const isWin = fl >= 0 && inV && inH && !shopFloor;
             if (isWin) {
               const occupied = hash2(bId, 7, seed) / 4294967296 < 0.9;
@@ -310,6 +314,15 @@ function render(frame, world, cam, opts = {}) {
                 if (night > 0.2) { const fw = Math.pow(f, 0.45); b = (0.55 + 0.4 * night) * fw + haze * (1 - fw); tn = TONE.WINDOW_LIT; }
                 else { b = wallBase * 0.4 * f + haze * (1 - f); tn = TONE.WINDOW_DARK; }
               }
+            }
+          }
+          if (houseFront && fl >= 0 && fl < house.floors) {
+            const g = houseCell(house.style, house.i === house.door, house.i === house.garage, uu, vf, fl);
+            if (g) { sp = g; tn = houseCell.tone; }
+            else if (houseCell.glass) {
+              const lit = hash2(bId * 13 + fl, 5, seed) / 4294967296 < night * 0.7 + 0.03;
+              if (night > 0.2 && lit) { const fw = Math.pow(f, 0.45); b = (0.55 + 0.4 * night) * fw + haze * (1 - fw); tn = TONE.WINDOW_LIT; }
+              else { b = wallBase * 0.4 * f + haze * (1 - f); tn = TONE.WINDOW_DARK; }
             }
           }
           if (escOn && fl >= 1 && fl < h) {
@@ -488,7 +501,50 @@ function drawProps(frame, world, cam, g) {
           box(frame, g, sx, 0.025, z0, z0 + 0.36, dep, 124, TONE.LAMP, 1);
           box(frame, g, sx, 0.1, z0 + 0.28, z0 + 0.36, dep, 62, TONE.SIGN, 1);
           break;
+        case 101: case 102: case 103: case 104: case 106: { // pitched roofs: stacked slabs narrowing to a ridge, steeper for tudor and victorian
+          const w = Math.min(p.w || 2.4, 4) + 0.3;
+          const steep = p.k === 104 || p.k === 106 ? 0.13 : p.k === 102 ? 0.1 : 0.08;
+          const layers = p.k === 104 || p.k === 106 ? 5 : p.k === 102 ? 4 : 3;
+          for (let n = 0; n < layers; n++) {
+            const wn = w * (1 - n / (layers + 0.6));
+            box(frame, g, sx, wn, z0 + n * steep, z0 + (n + 1) * steep, dep, n === layers - 1 ? 94 : n === 0 ? 61 : 45, TONE.TANK, 1);
+          }
+          if (p.k === 106) { // turret with a pointed cap
+            box(frame, g, sx, 0.18, z0, z0 + 0.34, dep, 35, TONE.TANK, 1);
+            box(frame, g, sx, 0.22, z0 + 0.34, z0 + 0.4, dep, 94, TONE.TANK, 1);
+            box(frame, g, sx, 0.08, z0 + 0.4, z0 + 0.5, dep, 94, TONE.TANK, 1);
+          }
+          break;
+        }
+        case 105: // flat roof with a parapet and a rooftop box
+          box(frame, g, sx, Math.min(p.w || 2.4, 4) + 0.2, z0, z0 + 0.03, dep, 95, TONE.TANK, 1);
+          box(frame, g, sx, 0.3, z0 + 0.03, z0 + 0.09, dep, 35, TONE.TANK, 1);
+          break;
+        case 190: // chimney
+          box(frame, g, sx, 0.08, z0, z0 + 0.17, dep, 35, TONE.TANK, 1);
+          break;
         default: break;
+      }
+    } else if (p.type === PROP.PLAY) {
+      const col = (tiles) => (tiles * g.focalX) / dep;
+      if (p.v === 0) { // swing set: two end frames, a top bar, two swings
+        box(frame, g, sx - col(0.3), 0.05, 0, 0.36, dep, 124, TONE.SIGN, 1);
+        box(frame, g, sx + col(0.3), 0.05, 0, 0.36, dep, 124, TONE.SIGN, 1);
+        box(frame, g, sx, 0.7, 0.34, 0.38, dep, 61, TONE.SIGN, 1);
+        box(frame, g, sx - col(0.11), 0.07, 0.08, 0.11, dep, 117, TONE.AWNING, 1);
+        box(frame, g, sx + col(0.11), 0.07, 0.08, 0.11, dep, 117, TONE.AWNING, 1);
+      } else if (p.v === 1) { // slide: tower, ramp
+        box(frame, g, sx - col(0.18), 0.14, 0, 0.3, dep, 72, TONE.AWNING, 1);
+        box(frame, g, sx - col(0.18), 0.18, 0.3, 0.34, dep, 94, TONE.AWNING, 1);
+        box(frame, g, sx + col(0.12), 0.3, 0.02, 0.2, dep, 47, TONE.SIGN, 1);
+      } else if (p.v === 2) { // jungle gym: a grid of bars
+        box(frame, g, sx, 0.46, 0.2, 0.26, dep, 43, TONE.SIGN, 1);
+        box(frame, g, sx - col(0.2), 0.04, 0, 0.2, dep, 124, TONE.SIGN, 1);
+        box(frame, g, sx + col(0.2), 0.04, 0, 0.2, dep, 124, TONE.SIGN, 1);
+        box(frame, g, sx, 0.04, 0, 0.2, dep, 124, TONE.SIGN, 1);
+      } else { // seesaw
+        box(frame, g, sx, 0.5, 0.08, 0.12, dep, 61, TONE.AWNING, 1);
+        box(frame, g, sx, 0.06, 0, 0.08, dep, 94, TONE.SIGN, 1);
       }
     } else if (p.type === PROP.STEEPLE) {
       const z0 = p.v * FLOOR_H;

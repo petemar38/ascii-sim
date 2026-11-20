@@ -10,6 +10,7 @@ const DISTRICT_NAMES = {
   residential: ['Vantage Gardens', 'Ember Hollow', 'Orbit Court', 'Willow Static', 'Harbor Lights', 'Cinder Green'],
   industrial: ['Foundry Flats', 'Terminal Yards', 'Rivet Works', 'Anvil Basin', 'Kiln Quarter'],
   parkland: ['Phosphor Commons', 'Neon Meadow', 'Lumen Park', 'Fernwave Reach'],
+  suburb: ['Maple Hollow', 'Cedar Glen', 'Juniper Ridge', 'Lantern Heights', 'Fable Grove', 'Copper Meadows', 'Willowbrook', 'Orchard Lane'],
 };
 
 const STREET_WORDS = [
