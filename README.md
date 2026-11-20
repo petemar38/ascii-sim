@@ -112,3 +112,18 @@ changes the existing city. Fire escapes are drawn procedurally on some facades i
 
 `test/golden.json` stores hashes of worlds and frames. If you change rendering on purpose,
 run `npm run test:update-golden` and review the diff.
+
+## Plants and birds (a Pennsylvania spring)
+
+`src/veg.js` lists the plants: eleven tree species (oak, red maple, white pine, hemlock, birch, cherry, dogwood, redbud,
+Bradford pear, weeping willow, tulip poplar; conifers are cones, willows have hanging strands, the flowering ones are
+speckled with blossom), five shrubs (boxwood, forsythia, lilac, mountain laurel, azalea), tulips and daffodils in the yard
+beds, dandelion, clover and violet patches on the lawns, and weeds: tall grass, thistle, mullein, burdock, ferns and
+crabgrass in the pavement cracks (most of all in the industrial blocks).
+
+`src/birds.js` has 22 species: robin, cardinal, blue jay, chickadee, house sparrow, mourning dove, goldfinch, red-winged
+blackbird, starling, Canada goose, turkey vulture, red-tailed hawk, barn swallow, pigeon, crow, Baltimore oriole,
+bluebird, hummingbird, downy woodpecker, wild turkey, and (at night) bats and barred owls. They perch in trees and on lamps,
+wires, roofs, chimneys and playground frames, feed on the lawns, wheel over downtown, swoop over the parks and fly north in
+V formation. A bird is a small record and `birdPose(bird, t)` gives its position at clock time `t`, so the world stays
+deterministic: pass `clock` (seconds) to `render` to animate them (the web page and terminal player do this).

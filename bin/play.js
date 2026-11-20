@@ -33,7 +33,7 @@ const headless = opt.frames !== undefined || !process.stdout.isTTY;
 if (headless) {
   const cols = +opt.cols || 120, rows = +opt.rows || 40;
   const frame = C.createFrame(cols, rows);
-  C.render(frame, world, cam, { time });
+  C.render(frame, world, cam, { time, clock: opt.clock !== undefined ? +opt.clock : 0 });
   process.stdout.write(C.frameRows(frame).join('\n') + '\n' + C.buildHud(world, cam, time).join('\n') + '\n');
   process.exit(0);
 }
@@ -103,7 +103,7 @@ setInterval(() => {
   };
   const run = [...held.keys()].some((k) => k.endsWith('+shift'));
   if (!menu) C.stepCamera(world, cam, input, dt, run);
-  C.render(frame, world, cam, { time });
+  C.render(frame, world, cam, { time, clock: now / 1000 });
   const useColor = colorOn && !menu; // the travel menu is drawn as plain text over the view
   const rowsOut = useColor ? C.ansiRows(frame, C.makePalette(time), truecolor) : C.frameRows(frame);
   if (menu) { // draw the travel menu over the top-left of the view

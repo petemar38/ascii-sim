@@ -14,6 +14,7 @@
 const { hash2 } = require('./rng');
 const { K, ROAD_MARK, EDGE_HEIGHT, PROP, DECO, STORE } = require('./world');
 const { shopCell, houseCell } = require('./facade');
+const { SPECIES, birdPose } = require('./birds');
 
 const FLOOR_H = 0.4; // one floor, in tiles (a tile is ~8 m, so ~3.2 m per floor)
 const WINDOWS_PER_TILE = 3;
@@ -23,11 +24,25 @@ const RAMP_LAST = RAMP.length - 1;
 const RAMP_CODES = Array.from(RAMP, (c) => c.charCodeAt(0));
 
 /** Material ids written to Frame.tone. */
+const { TREES, SHRUBS, FLOWERS, WEED: WEEDK } = require('./veg');
 const TONE = {
   SKY: 0, STAR: 1, ROAD: 2, MARKING: 3, SIDEWALK: 4, PARK: 5, PLAZA: 6,
   WALL: 7, WINDOW_LIT: 8, WINDOW_DARK: 9, EDGE: 10, VOID: 11,
   LAMP: 12, LAMP_LIT: 13, TRUNK: 14, LEAF: 15, SIGNAL_RED: 16, SIGNAL_GREEN: 17, CROSSWALK: 18, CURB: 19, MANHOLE: 20, FIRE_ESCAPE: 21, HYDRANT: 22, TANK: 23, WIRE: 24, DOOR: 25, SIGN: 26, AWNING: 27, COLUMN: 28,
+  PINE: 29, BIRCH: 30, BLOSSOM_PINK: 31, BLOSSOM_WHITE: 32, FLOWER_YELLOW: 33, FLOWER_RED: 34, FLOWER_PURPLE: 35, WEED: 36, LEAF_LIGHT: 37, REDBUD: 38,
+  B_GRAY: 40, B_ORANGE: 41, B_RED: 42, B_BLUE: 43, B_YELLOW: 44, B_BLACK: 45, B_BROWN: 46, B_WHITE: 47, B_TAN: 48, B_GREEN: 49,
 };
+
+const BIRD_TONES = { B_GRAY: TONE.B_GRAY, B_ORANGE: TONE.B_ORANGE, B_RED: TONE.B_RED, B_BLUE: TONE.B_BLUE, B_YELLOW: TONE.B_YELLOW, B_BLACK: TONE.B_BLACK, B_BROWN: TONE.B_BROWN, B_WHITE: TONE.B_WHITE, B_TAN: TONE.B_TAN, B_GREEN: TONE.B_GREEN };
+
+/** frame.id value of a sprite cell (bird, wire) drawn over open sky, so the colour pass keeps the sky behind it. */
+const SKY_BEHIND = 0xffffffff;
+
+/** Write a sprite cell. Over open sky the cell remembers it, so the colour pass keeps the sky background behind it. */
+function put(frame, i, glyph, toneId, dep) {
+  frame.id[i] = (frame.tone[i] <= TONE.STAR || frame.id[i] === SKY_BEHIND) ? SKY_BEHIND : 0;
+  frame.ch[i] = glyph; frame.tone[i] = toneId; frame.z[i] = dep;
+}
 
 function createFrame(cols, rows) {
   return {
@@ -348,6 +363,9 @@ function render(frame, world, cam, opts = {}) {
   if (world.props && world.props.length) {
     drawProps(frame, world, cam, { wrapD: wrap ? (d) => d - size * Math.round(d / size) : (d) => d, hz, focalX, focalY, tanHalf, dirX, dirY, planeX, planeY, eyeZ, viewDist, light, haze, seed });
   }
+  if (world.birds && world.birds.length) {
+    drawBirds(frame, world, cam, { wrapD: wrap ? (d) => d - size * Math.round(d / size) : (d) => d, hz, focalX, focalY, tanHalf, planeX, planeY, dirX, dirY, eyeZ, viewDist, light, clock: opts.clock || 0 });
+  }
   return frame;
 }
 
@@ -385,7 +403,7 @@ function box(frame, g, sx, wT, z0, z1, dep, glyph, toneId, minRows) {
     if (x < 0 || x >= cols) continue;
     for (let r = r0; r < r1; r++) {
       const i = r * cols + x;
-      if (dep < z[i]) { ch[i] = glyph; tone[i] = toneId; id[i] = 0; z[i] = dep; }
+      if (dep < z[i]) put(frame, i, glyph, toneId, dep);
     }
   }
 }
@@ -424,7 +442,7 @@ function drawWires(frame, world, cam, g) {
               const cc = Math.round(pc + dc * u), rr = Math.round(pr + dr * u), dd = pd + (dep - pd) * u;
               if (cc < 0 || cc >= cols || rr < 0 || rr >= rows) continue;
               const i = rr * cols + cc;
-              if (dd < z[i]) { ch[i] = glyph; tone[i] = TONE.WIRE; id[i] = 0; z[i] = dd; }
+              if (dd < z[i]) put(frame, i, glyph, TONE.WIRE, dd);
             }
           }
         }
@@ -444,11 +462,11 @@ function drawProps(frame, world, cam, g) {
     const dx = g.wrapD(p.x - cam.x), dy = g.wrapD(p.y - cam.y);
     const dep = dx * g.dirX + dy * g.dirY;
     if (dep < 0.4 || dep > g.viewDist) continue;
+    if (dep > g.viewDist * 0.72 && p.type >= PROP.FLOWER) continue;
     const camX = (dx * g.planeX + dy * g.planeY) / dep;
     if (camX > g.tanHalf * 1.2 || camX < -g.tanHalf * 1.2) continue;
     vis.push({ p, dep, sx: (camX / g.tanHalf + 1) * cols * 0.5 });
   }
-  vis.sort((a, b) => b.dep - a.dep); // far to near
   drawWires(frame, world, cam, g);
   const lampOn = night > 0.25;
 
@@ -556,30 +574,131 @@ function drawProps(frame, world, cam, g) {
       box(frame, g, sx, 0.03, z0, z0 + 0.6, dep, 124, TONE.LAMP, 1);
       if (lampOn) box(frame, g, sx, 0.09, z0 + 0.58, z0 + 0.66, dep, 42, TONE.SIGNAL_RED, 1); // beacon '*'
     } else if (p.type === PROP.TREE) {
-      const big = p.v === 0;
-      const trunkH = big ? 0.26 : 0.22, rad = big ? 0.3 : 0.2, cz = trunkH + rad * 0.8, ry = rad * 0.95;
-      box(frame, g, sx, 0.07, 0, trunkH + 0.04, dep, 124, TONE.TRUNK, 1);
-      /* canopy: an ellipse, cell by cell, with a little leaf texture */
-      const wc = Math.max(1, Math.round((rad * 2 * g.focalX) / dep));
-      const c0 = Math.round(sx - wc / 2);
-      const top = g.hz - ((cz + ry - g.eyeZ) * g.focalY) / dep;
-      const bot = g.hz - ((cz - ry - g.eyeZ) * g.focalY) / dep;
-      const r0 = Math.max(0, Math.ceil(top - 0.5)), r1 = Math.min(rows, Math.max(r0 + 1, Math.ceil(bot - 0.5)));
-      const hr = Math.max(0.5, (r1 - r0) / 2), hc = Math.max(0.5, wc / 2);
-      for (let x = c0; x < c0 + wc; x++) {
-        if (x < 0 || x >= cols) continue;
-        const ux = (x + 0.5 - (c0 + wc / 2)) / hc;
-        for (let r = r0; r < r1; r++) {
-          const uy = (r + 0.5 - (r0 + hr)) / hr;
-          if (ux * ux + uy * uy > 1.05) continue;
-          const i = r * cols + x;
-          if (dep >= z[i]) continue;
-          const tex = hash2(x * 7 + (r0 | 0), r, g.seed) / 4294967296;
-          const lit = 1 - 0.25 * (uy + 1) / 2; // top catches more light
-          const b = ((0.28 + 0.5 * ambient) * (0.75 + 0.5 * tex) * lit) * f + g.haze * (1 - f);
-          ch[i] = rampCode(b); tone[i] = TONE.LEAF; id[i] = 0; z[i] = dep;
-        }
+      const sp = TREES[p.k || 0], hh = hash2((p.x * 64) | 0, (p.y * 64) | 0, g.seed ^ 0x77) / 4294967296;
+      const sc = (p.v ? 0.72 : 1) * (0.85 + 0.3 * hh);
+      const trunkH = sp.trunkH * sc, rad = sp.rad * sc, ry = sp.ry * sc;
+      box(frame, g, sx, sp.shape === 'cone' ? 0.06 : 0.07, 0, trunkH + 0.04, dep, 124, TONE[sp.trunk], 1);
+      blob(frame, g, sx, dep, f, { cz: trunkH + ry * 0.85, rad, ry, shape: sp.shape, tone: TONE[sp.leaf], bloom: sp.bloom && TONE[sp.bloom], bloomP: sp.bloomP || 0, ambient, salt: hh });
+    } else if (p.type === PROP.SHRUB) {
+      const sp = SHRUBS[p.k || 0];
+      blob(frame, g, sx, dep, f, { cz: sp.h * 0.5, rad: sp.rad, ry: sp.h * 0.5, shape: 'ell', tone: TONE[sp.leaf], bloom: sp.bloom && TONE[sp.bloom], bloomP: sp.bloomP || 0, ambient, salt: p.x });
+    } else if (p.type === PROP.FLOWER) {
+      if (dep > g.viewDist * 0.72) continue;
+      const sp = FLOWERS[p.k || 0], n = p.k <= 1 ? 4 : 3;
+      for (let q = 0; q < n; q++) {
+        const r1 = hash2((p.x * 97) | 0, (p.y * 97) | 0, q + 11) / 4294967296, r2 = hash2((p.x * 53) | 0, (p.y * 53) | 0, q + 31) / 4294967296;
+        const h = sp.h[0] + (sp.h[1] - sp.h[0]) * r2, sq = sx + ((r1 - 0.5) * 0.34 * g.focalX) / dep;
+        if (h > 0.06 && f > 0.25) box(frame, g, sq, 0.015, 0, h * 0.85, dep, 124, TONE.LEAF, 1);
+        box(frame, g, sq, 0.05, h * 0.8, h + 0.02, dep, sp.glyph, TONE[sp.head[(p.v + q) % sp.head.length]], 1);
       }
+    } else if (p.type === PROP.WEED) {
+      if (dep > g.viewDist * 0.72) continue;
+      const k = p.k || 0, lean = (q) => [92, 124, 47][q % 3];
+      if (k === WEEDK.GRASS) {
+        for (let q = 0; q < 3; q++) box(frame, g, sx + ((q - 1) * 0.07 * g.focalX) / dep, 0.015, 0, 0.08 + 0.03 * ((q * 7 + ((p.x * 10) | 0)) % 3), dep, lean(q), q === 1 ? TONE.WEED : TONE.LEAF, 1);
+      } else if (k === WEEDK.THISTLE) {
+        box(frame, g, sx, 0.015, 0, 0.16, dep, 124, TONE.LEAF, 1);
+        box(frame, g, sx, 0.06, 0.15, 0.21, dep, 42, TONE.FLOWER_PURPLE, 1);
+      } else if (k === WEEDK.MULLEIN) {
+        box(frame, g, sx, 0.03, 0, 0.2, dep, 124, TONE.WEED, 1);
+        box(frame, g, sx, 0.03, 0.2, 0.34, dep, 124, TONE.FLOWER_YELLOW, 1);
+        box(frame, g, sx, 0.12, 0, 0.04, dep, 118, TONE.WEED, 1);
+      } else if (k === WEEDK.BURDOCK) {
+        blob(frame, g, sx, dep, f, { cz: 0.07, rad: 0.18, ry: 0.07, shape: 'ell', tone: TONE.LEAF, ambient, salt: p.x });
+      } else if (k === WEEDK.FERN) {
+        for (let q = 0; q < 3; q++) box(frame, g, sx + ((q - 1) * 0.07 * g.focalX) / dep, 0.03, 0, 0.12, dep, q === 0 ? 92 : q === 1 ? 124 : 47, TONE.LEAF, 1);
+      } else { // crabgrass in a pavement crack
+        box(frame, g, sx, 0.05, 0, 0.05, dep, 34, TONE.WEED, 1);
+      }
+    }
+  }
+}
+
+/** A leafy blob (tree crown, shrub): an ellipse cell by cell, cone-shaped for conifers, with hanging strands for willows. */
+function blob(frame, g, sx, dep, f, o) {
+  const { cols, rows, ch, tone, id, z } = frame;
+  const { cz, rad, ry } = o;
+  const wc = Math.max(1, Math.round((rad * 2 * g.focalX) / dep));
+  const c0 = Math.round(sx - wc / 2);
+  const top = g.hz - ((cz + ry - g.eyeZ) * g.focalY) / dep;
+  const bot = g.hz - ((cz - ry - g.eyeZ) * g.focalY) / dep;
+  const r0 = Math.max(0, Math.ceil(top - 0.5)), r1 = Math.min(rows, Math.max(r0 + 1, Math.ceil(bot - 0.5)));
+  const hr = Math.max(0.5, (r1 - r0) / 2), hc = Math.max(0.5, wc / 2);
+  const seed = g.seed;
+  for (let x = c0; x < c0 + wc; x++) {
+    if (x < 0 || x >= cols) continue;
+    const ux = (x + 0.5 - (c0 + wc / 2)) / hc;
+    for (let r = r0; r < r1; r++) {
+      const uy = (r + 0.5 - (r0 + hr)) / hr;
+      if (o.shape === 'cone' ? Math.abs(ux) > 0.12 + 0.9 * (uy + 1) / 2 : ux * ux + uy * uy > 1.05) continue;
+      const i = r * cols + x;
+      if (dep >= z[i]) continue;
+      const tex = hash2(x * 7 + (r0 | 0), r, seed) / 4294967296;
+      if (o.bloom && tex < o.bloomP) { // a blossom
+        put(frame, i, 42, o.bloom, dep);
+        continue;
+      }
+      const lit = 1 - 0.25 * (uy + 1) / 2; // top catches more light
+      const b = ((0.28 + 0.5 * o.ambient) * (0.75 + 0.5 * tex) * lit) * f + g.haze * (1 - f);
+      put(frame, i, rampCode(b), o.tone, dep);
+    }
+  }
+  if (o.shape === 'drop' && f > 0.2) { // willow: strands hang below the crown
+    const sr = Math.max(1, Math.round(ry * 1.1 * g.focalY / dep));
+    for (let x = c0 + 1; x < c0 + wc - 1; x++) {
+      if (x < 0 || x >= cols || hash2(x, r1, seed ^ 0x3b) / 4294967296 > 0.7) continue;
+      for (let r = r1; r < Math.min(rows, r1 + sr); r++) {
+        const i = r * cols + x;
+        if (dep < z[i]) put(frame, i, 124, o.tone, dep);
+      }
+    }
+  }
+}
+
+/** Birds: one to a few cells each, drawn after the props and tested against the depth buffer. */
+const BIRD_UP_L = 92, BIRD_UP_R = 47, BIRD_FLAT = 45; // '\\' '/' '-'
+function drawBirds(frame, world, cam, g) {
+  const { cols, rows, ch, tone, id, z } = frame;
+  const night = g.light.night, t = g.clock;
+  for (const b of world.birds) {
+    const spc = SPECIES[b.sp];
+    if (spc.night ? night < 0.5 : night > 0.72) continue; // songbirds roost after dusk, bats and owls come out
+    const pose = birdPose(b, t);
+    const dx = g.wrapD(pose.x - cam.x), dy = g.wrapD(pose.y - cam.y);
+    const dep = dx * g.dirX + dy * g.dirY;
+    if (dep < 1 || dep > g.viewDist * 0.9) continue;
+    const camX = (dx * g.planeX + dy * g.planeY) / dep;
+    if (camX > g.tanHalf * 1.05 || camX < -g.tanHalf * 1.05) continue;
+    const sx = (camX / g.tanHalf + 1) * cols * 0.5;
+    const wc = Math.max(1, Math.min(b.mode <= 1 ? 4 : 9, Math.round((spc.size * g.focalX) / dep)));
+    const row = Math.floor(g.hz - ((pose.z + spc.size * 0.2 - g.eyeZ) * g.focalY) / dep);
+    if (row < 0 || row >= rows) continue;
+    const back = BIRD_TONES[spc.back], breast = BIRD_TONES[spc.breast], dot = BIRD_TONES[spc.dot];
+    const dd = dep - b.bias;
+    const c0 = Math.round(sx - wc / 2);
+    const right = pose.hx * g.planeX + pose.hy * g.planeY >= 0; // heading to the right of the screen
+    for (let k = 0; k < wc; k++) {
+      const x = c0 + k;
+      if (x < 0 || x >= cols) continue;
+      const i = row * cols + x;
+      if (dd >= z[i]) continue;
+      let glyph, tn;
+      if (pose.flying) {
+        if (wc === 1) { glyph = pose.flap ? 118 : BIRD_FLAT; tn = dot; }
+        else {
+          const L = wc === 2 ? 1 : Math.floor((wc - 1) / 2), body = wc === 2 ? -1 : L;
+          const up = pose.flap || spc.dihedral;
+          if (k === body) { glyph = wc >= 6 ? 79 : 111; tn = breast; }
+          else { glyph = up ? (k < L ? BIRD_UP_L : BIRD_UP_R) : BIRD_FLAT; tn = back; }
+        }
+      } else if (wc === 1) { glyph = 111; tn = dot; }
+      else { // perched or on the ground: tail, body, head, facing the way it is heading
+        const head = right ? wc - 1 : 0, tail = right ? 0 : wc - 1;
+        if (k === head) { glyph = 111; tn = back; }
+        else if (k === tail && wc >= 3) { glyph = 126; tn = back; }
+        else { glyph = 79; tn = breast; }
+      }
+      put(frame, i, glyph, tn, dd);
     }
   }
 }
@@ -606,4 +725,4 @@ function frameHash(frame) {
   return h >>> 0;
 }
 
-module.exports = { render, createFrame, frameRows, frameHash, lighting, TONE, RAMP, FLOOR_H };
+module.exports = { SKY_BEHIND, render, createFrame, frameRows, frameHash, lighting, TONE, RAMP, FLOOR_H };

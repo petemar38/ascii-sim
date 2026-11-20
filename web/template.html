@@ -131,7 +131,7 @@ pre { margin: 0; font-family: var(--mono); }
       look: (keys.arrowup ? 1 : 0) - (keys.arrowdown ? 1 : 0),
     };
     C.stepCamera(world, cam, input, dt, !!keys.shift);
-    C.render(frame, world, cam, { time: time, cellAspect: cellAspect, filler: filler });
+    C.render(frame, world, cam, { time: time, cellAspect: cellAspect, filler: filler, clock: now / 1000 });
     if (colorOn) {
       var pk = Math.round(time * 4);
       if (pk !== palKey) { palKey = pk; pal = C.makePalette(time); }

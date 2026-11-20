@@ -19,6 +19,8 @@
 
 const { mulberry32, hash2, toSeed } = require('./rng');
 const { makeNamer } = require('./names');
+const { TREE, SHRUB, FLOWER, WEED } = require('./veg');
+const { makeBirds } = require('./birds');
 
 const K = { NONE: 0, ROAD: 1, SIDEWALK: 2, PARK: 3, BUILDING: 4, PLAZA: 5, YARD: 6 };
 const D = { DOWNTOWN: 0, COMMERCIAL: 1, RESIDENTIAL: 2, INDUSTRIAL: 3, PARKLAND: 4, SUBURB: 5 };
@@ -43,7 +45,7 @@ const PROP_RADIUS = { 1: 0.07, 2: 0.11, 3: 0.07, 4: 0.09, 5: 0.08, 10: 0.2 }; //
 const EDGE_HEIGHT = 90;
 
 /** Street furniture ("props"): standing objects drawn as sprites. */
-const PROP = { LAMP: 1, TREE: 2, SIGNAL: 3, HYDRANT: 4, POLE: 5, TANK: 6, ANTENNA: 7, STEEPLE: 8, ROOFPIECE: 9, PLAY: 10 };
+const PROP = { LAMP: 1, TREE: 2, SIGNAL: 3, HYDRANT: 4, POLE: 5, TANK: 6, ANTENNA: 7, STEEPLE: 8, ROOFPIECE: 9, PLAY: 10, SHRUB: 11, FLOWER: 12, WEED: 13 };
 /** deco[]: crosswalk on a road tile, named for the intersection arm it sits on. */
 const DECO = { NONE: 0, CROSS_N: 1, CROSS_S: 2, CROSS_W: 3, CROSS_E: 4, MANHOLE: 5 };
 
@@ -514,12 +516,47 @@ function generateWorld(opts = {}) {
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const k = kind[idx(x, y)];
-      if (k === K.YARD) {
-        if (h01(x, y, 0x7ef) < 0.07) props.push({ x: x + 0.2 + 0.6 * h01(x, y, 0x13), y: y + 0.2 + 0.6 * h01(x, y, 0x24), type: PROP.TREE, v: 0 });
-      } else if (k === K.PARK) {
-        if (h01(x, y, 0x7ee) < 0.16) props.push({ x: x + 0.2 + 0.6 * h01(x, y, 0x11), y: y + 0.2 + 0.6 * h01(x, y, 0x22), type: PROP.TREE, v: 0 });
+      if (k === K.YARD || k === K.PARK) {
+        const dt = districts[district[idx(x, y)]].type;
+        const yard = k === K.YARD, wild = dt === D.PARKLAND;
+        const at = (a, b) => ({ x: x + 0.15 + 0.7 * h01(x, y, a), y: y + 0.15 + 0.7 * h01(x, y, b) });
+        const r = h01(x, y, 0x7ef);
+        if (r < (yard ? 0.07 : 0.16)) {
+          const s2 = h01(x, y, 0x5a1);
+          let sp;
+          if (yard) sp = s2 < 0.22 ? TREE.MAPLE : s2 < 0.38 ? TREE.DOGWOOD : s2 < 0.5 ? TREE.CHERRY : s2 < 0.6 ? TREE.REDBUD : s2 < 0.72 ? TREE.OAK : s2 < 0.82 ? TREE.PINE : s2 < 0.92 ? TREE.BIRCH : TREE.PEAR;
+          else if (wild) sp = s2 < 0.2 ? TREE.PINE : s2 < 0.32 ? TREE.HEMLOCK : s2 < 0.5 ? TREE.OAK : s2 < 0.64 ? TREE.BIRCH : s2 < 0.78 ? TREE.MAPLE : s2 < 0.88 ? TREE.POPLAR : s2 < 0.95 ? TREE.WILLOW : TREE.DOGWOOD;
+          else sp = s2 < 0.3 ? TREE.OAK : s2 < 0.5 ? TREE.MAPLE : s2 < 0.62 ? TREE.PINE : s2 < 0.72 ? TREE.BIRCH : s2 < 0.8 ? TREE.CHERRY : s2 < 0.88 ? TREE.WILLOW : s2 < 0.94 ? TREE.POPLAR : TREE.DOGWOOD;
+          props.push({ ...at(0x13, 0x24), type: PROP.TREE, v: 0, k: sp });
+        } else if (r < (yard ? 0.14 : 0.2) && (yard || wild || h01(x, y, 0x5a2) < 0.5)) { // shrubs, mostly in yards
+          const s2 = h01(x, y, 0x5a3);
+          props.push({ ...at(0x14, 0x25), type: PROP.SHRUB, v: 0, k: yard ? (s2 < 0.25 ? SHRUB.BOXWOOD : s2 < 0.5 ? SHRUB.FORSYTHIA : s2 < 0.72 ? SHRUB.LILAC : s2 < 0.86 ? SHRUB.LAUREL : SHRUB.AZALEA) : (s2 < 0.4 ? SHRUB.LAUREL : s2 < 0.7 ? SHRUB.FORSYTHIA : SHRUB.LILAC) });
+        } else {
+          /* lawn: flower beds near the house, dandelions and clover in patches, weeds in the rough */
+          const meadow = h01(x >> 2, y >> 2, 0x9a) < 0.3;
+          const rr = h01(x, y, 0x5a4), s3 = h01(x, y, 0x5a5);
+          if (yard && rr < 0.07) {
+            const n = 1 + (h01(x, y, 0x5a6) * 3 | 0);
+            for (let q = 0; q < n; q++) props.push({ x: x + 0.15 + 0.7 * h01(x, y, 0x60 + q), y: y + 0.15 + 0.7 * h01(x, y, 0x70 + q), type: PROP.FLOWER, v: (h01(x, y, 0x80 + q) * 3) | 0, k: s3 < 0.55 ? FLOWER.TULIP : FLOWER.DAFFODIL });
+          } else if (rr < (meadow ? 0.55 : 0.1)) {
+            props.push({ x: x + 0.1 + 0.8 * h01(x, y, 0x15), y: y + 0.1 + 0.8 * h01(x, y, 0x26), type: PROP.FLOWER, v: (h01(x, y, 0x81) * 3) | 0, k: s3 < 0.5 ? FLOWER.DANDELION : s3 < 0.75 ? FLOWER.CLOVER : FLOWER.VIOLET });
+          } else if (rr > (yard ? 0.93 : 0.8)) {
+            const w = h01(x, y, 0x5a7);
+            props.push({ x: x + 0.1 + 0.8 * h01(x, y, 0x16), y: y + 0.1 + 0.8 * h01(x, y, 0x27), type: PROP.WEED, v: 0, k: yard ? (w < 0.7 ? WEED.GRASS : w < 0.85 ? WEED.THISTLE : WEED.FERN) : (w < 0.4 ? WEED.GRASS : w < 0.55 ? WEED.THISTLE : w < 0.7 ? WEED.MULLEIN : w < 0.85 ? WEED.BURDOCK : WEED.FERN) });
+          }
+        }
       } else if (k === K.SIDEWALK) {
         if (frontage.has(idx(x, y))) continue;
+        { // weeds in the pavement cracks, most of all in the old industrial blocks; now and then a dandelion
+          const dt = districts[district[idx(x, y)]].type;
+          const rw2 = h01(x, y, 0x5b1);
+          if (rw2 < (dt === D.INDUSTRIAL ? 0.07 : dt === D.DOWNTOWN ? 0.012 : 0.03)) {
+            const w = h01(x, y, 0x5b2);
+            props.push({ x: x + 0.15 + 0.7 * h01(x, y, 0x5b3), y: y + 0.15 + 0.7 * h01(x, y, 0x5b4), type: PROP.WEED, v: 0, k: dt === D.INDUSTRIAL && w < 0.25 ? WEED.MULLEIN : dt === D.INDUSTRIAL && w < 0.4 ? WEED.BURDOCK : WEED.CRACK });
+          } else if (rw2 > 0.985) {
+            props.push({ x: x + 0.15 + 0.7 * h01(x, y, 0x5b5), y: y + 0.15 + 0.7 * h01(x, y, 0x5b6), type: PROP.FLOWER, v: 0, k: FLOWER.DANDELION });
+          }
+        }
         const rw = isRoad(x - 1, y), re = isRoad(x + 1, y), rn = isRoad(x, y - 1), rs = isRoad(x, y + 1);
         const horiz = rw || re, vert = rn || rs;
         if (horiz === vert) continue; // not beside a road, or a corner tile
@@ -529,7 +566,7 @@ function generateWorld(opts = {}) {
         if (along % 6 === 2 + side) {
           props.push({ x: px, y: py, type: PROP.LAMP, v: 0 });
         } else if (along % 6 === side && districts[district[idx(x, y)]].type >= D.RESIDENTIAL && h01(x, y, 0x33) < 0.6) {
-          props.push({ x: x + 0.5, y: y + 0.5, type: PROP.TREE, v: 1 });
+          { const s2 = h01(x, y, 0x5a8); props.push({ x: x + 0.5, y: y + 0.5, type: PROP.TREE, v: 1, k: s2 < 0.3 ? TREE.MAPLE : s2 < 0.55 ? TREE.PEAR : s2 < 0.72 ? TREE.OAK : s2 < 0.84 ? TREE.CHERRY : s2 < 0.94 ? TREE.POPLAR : TREE.DOGWOOD }); }
         } else if (side === 0 && along % 12 === 4 && (() => { const dtp = districts[district[idx(x, y)]].type; return dtp !== D.DOWNTOWN && dtp !== D.PARKLAND; })()) {
           const pole = { x: px, y: py, type: PROP.POLE, v: 0, horiz, along };
           props.push(pole);
@@ -588,8 +625,10 @@ function generateWorld(opts = {}) {
     if (list) list.push(p); else propGrid.set(k, [p]);
   }
 
+  const birds = makeBirds({ size, seed: seedValue, kind, district, districts, props, wires, buildings, K, D, PROP });
+
   return {
-    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, propGrid, stores, shops, facades, houses,
+    seed: seedValue, size, wrap, kind, height, district, bid, mark, deco, glow, props, wires, birds, propGrid, stores, shops, facades, houses,
     districts, vRoads, hRoads, spawn, landmarks,
   };
 }
@@ -693,7 +732,7 @@ function worldHash(world) {
   let h = 2166136261 >>> 0;
   const feed = (arr) => { for (let i = 0; i < arr.length; i++) { h ^= arr[i] & 0xff; h = Math.imul(h, 16777619) >>> 0; } };
   feed(world.kind); feed(world.height); feed(world.district); feed(world.mark); feed(world.deco); feed(world.glow);
-  h ^= world.props.length ^ (world.wires.length << 12);
+  h ^= world.props.length ^ (world.wires.length << 12) ^ (world.birds.length << 20);
   for (const s of world.stores) { h ^= s.kind * 31 + (s.face << 8) + Math.floor(s.x) * 7; h = Math.imul(h, 16777619) >>> 0; } h = Math.imul(h, 16777619) >>> 0;
   return h >>> 0;
 }

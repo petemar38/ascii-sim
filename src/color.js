@@ -11,11 +11,11 @@
  * so a street stops being one colour. Lights, stars, signals and signs stay bright at night.
  */
 
-const { TONE: T, RAMP, lighting } = require('./render');
+const { TONE: T, RAMP, lighting, SKY_BEHIND } = require('./render');
 
 const LEVELS = 4;
 const LEVEL_GAIN = [0.42, 0.64, 0.84, 1];
-const WALL_BASE = 40; // palette slot where the per-building wall materials start
+const WALL_BASE = 80; // palette slot where the per-building wall materials start
 const WALL_HUES = [
   [182, 96, 76], [200, 172, 124], [152, 152, 158], [112, 132, 164], [208, 198, 172], [138, 100, 80],
 ];
@@ -52,9 +52,29 @@ def(T.DOOR, [150, 92, 52], [96, 70, 62]);
 def(T.SIGN, [255, 204, 70], [255, 190, 80]);
 def(T.AWNING, [222, 64, 60], [140, 56, 70]);
 def(T.COLUMN, [228, 222, 206], [140, 140, 160]);
+def(T.PINE, [30, 112, 70], [14, 56, 50]);
+def(T.BIRCH, [236, 232, 220], [150, 152, 176]);
+def(T.BLOSSOM_PINK, [255, 170, 200], [150, 100, 130]);
+def(T.BLOSSOM_WHITE, [250, 248, 244], [170, 172, 196]);
+def(T.FLOWER_YELLOW, [255, 226, 40], [190, 170, 70]);
+def(T.FLOWER_RED, [240, 44, 52], [150, 50, 70]);
+def(T.FLOWER_PURPLE, [170, 90, 230], [100, 70, 150]);
+def(T.WEED, [150, 156, 70], [70, 76, 60]);
+def(T.LEAF_LIGHT, [128, 202, 70], [50, 100, 60]);
+def(T.REDBUD, [214, 52, 150], [120, 50, 100]);
+def(T.B_GRAY, [120, 126, 136], [108, 114, 140]);
+def(T.B_ORANGE, [255, 128, 28], [210, 120, 70]);
+def(T.B_RED, [235, 24, 36], [200, 60, 80]);
+def(T.B_BLUE, [20, 44, 190], [90, 110, 220]);
+def(T.B_YELLOW, [255, 224, 30], [225, 205, 90]);
+def(T.B_BLACK, [30, 30, 38], [130, 136, 170]);
+def(T.B_BROWN, [124, 78, 40], [120, 96, 104]);
+def(T.B_WHITE, [250, 250, 246], [176, 182, 206]);
+def(T.B_TAN, [200, 164, 120], [140, 128, 138]);
+def(T.B_GREEN, [40, 196, 96], [70, 150, 110]);
 
 // tones that glow: they keep full brightness whatever glyph they were drawn with
-const EMISSIVE = new Set([T.STAR, T.WINDOW_LIT, T.LAMP_LIT, T.SIGNAL_RED, T.SIGNAL_GREEN, T.SIGN, T.SKY, T.VOID]);
+const EMISSIVE = new Set([T.STAR, T.WINDOW_LIT, T.LAMP_LIT, T.SIGNAL_RED, T.SIGNAL_GREEN, T.SIGN, T.SKY, T.VOID, T.FLOWER_YELLOW, T.FLOWER_RED, T.BLOSSOM_PINK, T.BLOSSOM_WHITE, T.REDBUD, T.B_ORANGE, T.B_RED, T.B_BLUE, T.B_YELLOW, T.B_BLACK, T.B_BROWN, T.B_WHITE, T.B_TAN, T.B_GREEN, T.B_GRAY]);
 
 // how dense a glyph looks, 0..1: the ramp glyphs by position, everything else reads as fairly solid
 const DENSITY = new Float32Array(256).fill(0.8);
@@ -84,7 +104,7 @@ function skyBackground(night) {
 
 /** Sky background step (0 zenith .. 7 horizon) for cell i, or -1 when the cell is not sky. */
 function skyStep(frame, i) {
-  if (frame.tone[i] > T.STAR) return -1;
+  if (frame.tone[i] > T.STAR && frame.id[i] !== SKY_BEHIND) return -1;
   const y = (i / frame.cols) | 0;
   return Math.min(SKY_STEPS - 1, Math.floor((y / (frame.rows * 0.58)) * SKY_STEPS));
 }
