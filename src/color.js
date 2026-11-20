@@ -23,7 +23,7 @@ const WALL_HUES = [
 // [daylight colour, night colour]; a single colour means the same at both
 const BASE = [];
 function def(tone, day, night) { BASE[tone] = [day, night || day]; }
-def(T.SKY, [118, 176, 238], [16, 22, 56]);
+def(T.SKY, [214, 232, 252], [58, 70, 120]); // the glyphs in the sky read as haze against the sky background
 def(T.STAR, [236, 236, 208]);
 def(T.ROAD, [96, 96, 102], [58, 60, 76]);
 def(T.MARKING, [236, 212, 92], [190, 170, 80]);
@@ -63,6 +63,32 @@ DENSITY[32] = 0; DENSITY[46] = 0.18; DENSITY[44] = 0.2; DENSITY[39] = 0.2; DENSI
 
 const mix = (a, b, t) => Math.round(a + (b - a) * t);
 
+/* sky background: a vertical gradient from zenith to horizon, blended day to night, warm at dusk and dawn */
+const SKY_STEPS = 8;
+const SKY_DAY = [[64, 124, 214], [176, 212, 242]], SKY_NIGHT = [[3, 5, 16], [22, 28, 62]], SKY_GLOW = [236, 128, 72];
+function skyBackground(night) {
+  const twilight = 4 * night * (1 - night); // 0 at noon and midnight, 1 at the turn between
+  const rgb = new Uint8Array(SKY_STEPS * 3), css = [];
+  for (let k = 0; k < SKY_STEPS; k++) {
+    const t = k / (SKY_STEPS - 1);
+    for (let c = 0; c < 3; c++) {
+      const day = mix(SKY_DAY[0][c], SKY_DAY[1][c], t), nit = mix(SKY_NIGHT[0][c], SKY_NIGHT[1][c], t);
+      let v = mix(day, nit, night);
+      v = mix(v, SKY_GLOW[c], twilight * 0.75 * t * t); // the glow hugs the horizon
+      rgb[k * 3 + c] = v;
+    }
+    css.push('#' + [rgb[k * 3], rgb[k * 3 + 1], rgb[k * 3 + 2]].map((v) => v.toString(16).padStart(2, '0')).join(''));
+  }
+  return { rgb, css };
+}
+
+/** Sky background step (0 zenith .. 7 horizon) for cell i, or -1 when the cell is not sky. */
+function skyStep(frame, i) {
+  if (frame.tone[i] > T.STAR) return -1;
+  const y = (i / frame.cols) | 0;
+  return Math.min(SKY_STEPS - 1, Math.floor((y / (frame.rows * 0.58)) * SKY_STEPS));
+}
+
 /** Colours for one time of day (0-24). rgb is a flat Uint8Array: slot * 3. */
 function makePalette(time) {
   const { night } = lighting(time);
@@ -84,7 +110,7 @@ function makePalette(time) {
       css[s * LEVELS + l] = '#' + [rgb[o], rgb[o + 1], rgb[o + 2]].map((v) => v.toString(16).padStart(2, '0')).join('');
     }
   }
-  return { rgb, css };
+  return { rgb, css, sky: skyBackground(night) };
 }
 
 /** Palette slot (colour and brightness level) of cell i. */
@@ -104,12 +130,14 @@ function htmlRows(frame, pal) {
   const { cols, rows, ch } = frame;
   let out = '';
   for (let y = 0; y < rows; y++) {
-    let cur = -1, open = false;
+    let cur = -1, curBg = -1, open = false;
     for (let x = 0; x < cols; x++) {
-      const i = y * cols + x, c = ch[i];
-      if (c !== 32) {
-        const s = slotOf(frame, i);
-        if (s !== cur) { if (open) out += '</span>'; out += '<span style="color:' + pal.css[s] + '">'; cur = s; open = true; }
+      const i = y * cols + x, c = ch[i], bg = skyStep(frame, i);
+      const s = c !== 32 ? slotOf(frame, i) : cur; // a blank keeps the current text colour
+      if (s !== cur || bg !== curBg) {
+        if (open) out += '</span>';
+        out += '<span style="' + (s >= 0 ? 'color:' + pal.css[s] : '') + (bg >= 0 ? ';background:' + pal.sky.css[bg] : '') + '">';
+        cur = s; curBg = bg; open = true;
       }
       out += ESC[c] || String.fromCharCode(c);
     }
@@ -124,25 +152,23 @@ const cube = (v) => (v < 48 ? 0 : v < 115 ? 1 : Math.min(5, Math.floor((v - 35) 
 /** Rows with ANSI colour. truecolor: 24-bit codes; otherwise the nearest of the 256-colour cube. */
 function ansiRows(frame, pal, truecolor) {
   const { cols, rows, ch } = frame;
+  const code = (rgb, o, fg) => truecolor ? `\x1b[${fg ? 38 : 48};2;${rgb[o]};${rgb[o + 1]};${rgb[o + 2]}m`
+    : `\x1b[${fg ? 38 : 48};5;${16 + 36 * cube(rgb[o]) + 6 * cube(rgb[o + 1]) + cube(rgb[o + 2])}m`;
   const res = [];
   for (let y = 0; y < rows; y++) {
-    let line = '', cur = -1;
+    let line = '', cur = -1, curBg = -1;
     for (let x = 0; x < cols; x++) {
-      const i = y * cols + x, c = ch[i];
+      const i = y * cols + x, c = ch[i], bg = skyStep(frame, i);
+      if (bg !== curBg) { line += bg >= 0 ? code(pal.sky.rgb, bg * 3, false) : '\x1b[49m'; curBg = bg; }
       if (c !== 32) {
         const s = slotOf(frame, i);
-        if (s !== cur) {
-          const o = s * 3;
-          line += truecolor ? `\x1b[38;2;${pal.rgb[o]};${pal.rgb[o + 1]};${pal.rgb[o + 2]}m`
-            : `\x1b[38;5;${16 + 36 * cube(pal.rgb[o]) + 6 * cube(pal.rgb[o + 1]) + cube(pal.rgb[o + 2])}m`;
-          cur = s;
-        }
+        if (s !== cur) { line += code(pal.rgb, s * 3, true); cur = s; }
       }
       line += String.fromCharCode(c);
     }
-    res.push(line);
+    res.push(line + '\x1b[49m');
   }
   return res;
 }
 
-module.exports = { makePalette, slotOf, htmlRows, ansiRows, LEVELS };
+module.exports = { makePalette, slotOf, skyStep, htmlRows, ansiRows, LEVELS };

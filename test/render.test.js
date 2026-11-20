@@ -74,3 +74,17 @@ test('colour: lit windows and stars stay bright at night; walls get different ma
   }
   assert.ok(slots.size >= 3, 'walls all look alike: ' + slots.size + ' materials seen');
 });
+
+test('colour: the sky is blue by day, dark by night, and glows at the horizon at dusk', () => {
+  const lum = (css) => { const v = [1, 3, 5].map((i) => parseInt(css.slice(i, i + 2), 16)); return v[0] + v[1] + v[2]; };
+  const noon = C.makePalette(12).sky.css, night = C.makePalette(0).sky.css, dusk = C.makePalette(17.6).sky.css;
+  assert.ok(lum(noon[0]) > 3 * lum(night[0]), 'day sky is not much brighter than night');
+  assert.ok(parseInt(noon[0].slice(5, 7), 16) > parseInt(noon[0].slice(1, 3), 16) + 40, 'day zenith should be blue');
+  assert.ok(parseInt(dusk[7].slice(1, 3), 16) > parseInt(C.makePalette(0).sky.css[7].slice(1, 3), 16) + 60, 'no warm glow at the horizon at dusk');
+  // sky cells carry a background; ground cells do not
+  const f = C.createFrame(60, 20);
+  C.render(f, w, { x: w.spawn.x, y: w.spawn.y, angle: w.spawn.angle, pitch: 0.06, eyeZ: 0.21 }, { time: 12 });
+  const html = C.htmlRows(f, C.makePalette(12));
+  assert.ok(/background:#/.test(html));
+  assert.ok(C.skyStep(f, 0) >= 0 && C.skyStep(f, f.ch.length - 1) === -1);
+});
