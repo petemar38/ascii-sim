@@ -62,6 +62,8 @@ function cleanup() {
 require('readline').emitKeypressEvents(process.stdin);
 process.stdin.setRawMode(true);
 let menu = null; // list of entries while the travel menu is open
+let colorOn = !!process.env.ASCII_SIM_COLOR; // C toggles; start in colour with ASCII_SIM_COLOR=1
+const truecolor = /truecolor|24bit/i.test(process.env.COLORTERM || '');
 process.stdin.on('keypress', (str, key) => {
   if (!key) return;
   if (menu) {
@@ -74,6 +76,7 @@ process.stdin.on('keypress', (str, key) => {
   }
   if (str === 'l' || str === 'L') { menu = C.nearestStores(world, cam, 9); held.clear(); process.stdout.write('\x1b[2J'); return; }
   if (key.name === 'escape' || (key.name === 'q') || (key.ctrl && key.name === 'c')) return cleanup();
+  if (str === 'c' || str === 'C') { colorOn = !colorOn; process.stdout.write('\x1b[2J'); return; }
   if (str === ',') time = (time + 23.5) % 24;
   else if (str === '.') time = (time + 0.5) % 24;
   else held.set(key.name + (key.shift || (str && str !== str.toLowerCase()) ? '+shift' : ''), Date.now() + HOLD_MS);
@@ -101,7 +104,8 @@ setInterval(() => {
   const run = [...held.keys()].some((k) => k.endsWith('+shift'));
   if (!menu) C.stepCamera(world, cam, input, dt, run);
   C.render(frame, world, cam, { time });
-  const rowsOut = C.frameRows(frame);
+  const useColor = colorOn && !menu; // the travel menu is drawn as plain text over the view
+  const rowsOut = useColor ? C.ansiRows(frame, C.makePalette(time), truecolor) : C.frameRows(frame);
   if (menu) { // draw the travel menu over the top-left of the view
     const lines = ['NEAREST BUILDINGS  (1-9 go there, L or Esc closes)', ''].concat(C.travelMenuLines(menu));
     lines.forEach((t, i) => {
@@ -111,5 +115,5 @@ setInterval(() => {
     });
   }
   const hud = C.buildHud(world, cam, time);
-  process.stdout.write('\x1b[H\x1b[32m' + rowsOut.join('\n') + '\n' + '-'.repeat(cols) + '\n' + hud.join('\n') + '\x1b[0m');
+  process.stdout.write('\x1b[H\x1b[32m' + rowsOut.join('\n') + '\x1b[32m\n' + '-'.repeat(cols) + '\n' + hud.join('\n') + '\x1b[0m');
 }, 33);

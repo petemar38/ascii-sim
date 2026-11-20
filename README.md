@@ -37,6 +37,15 @@ a sign you can read from a few tiles away. Most kinds also have a distinctive ro
 dome, cross, sign) so you can tell them apart from far away. A test fails if two kinds ever look alike.
 Stores are assigned with `hash2` only, so adding or tuning them never changes the road layout.
 
+## Colour
+
+`src/color.js` colours a frame without touching the renderer: every cell already carries a tone (what it is) and a glyph
+(how bright), so colour is a lookup. `makePalette(hour)` blends day and night colours, `htmlRows(frame, pal)` returns one
+string of runs for a web page, and `ansiRows(frame, pal, truecolor)` returns terminal rows. Walls get one of six materials
+per building, lit windows, stars, signals and signs stay bright at night. Press C in the web page or terminal to toggle;
+`ASCII_SIM_COLOR=1 node bin/play.js` starts in colour, and `COLORTERM=truecolor` gives 24-bit colour (256-colour otherwise).
+Colour is optional: the core and the plain-text path never need it.
+
 ## Suburbs
 
 Away from downtown the city thins out into suburban districts (`D.SUBURB`). Blocks there hold detached houses in six
