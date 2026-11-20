@@ -137,11 +137,15 @@ walked near is lit and the rest stays dim, `S` marks where you started, and the 
 gone round the world, e.g. `1E 0`) and `EXPLORED` (percent of walkable ground seen). API: `createExplorer`, `explore`,
 `exploreJump` (after a teleport), `buildMap`, `mapHtml`, `mapAnsi`, `mapPlain`, `mapHudLines`.
 
-## Pixel mode (P)
+## Pixel mode (P): the DOS look
 
-`P` switches between characters and real coloured pixels. It is the same renderer at about 320 x 180 with square cells and
-solid fill, painted as flat-shaded pixels (`pixelRgba` for a canvas, `halfBlockRows` for terminals, two pixels per text
-row). Walls, sky and lights use the same palette as colour mode, so day, night and dusk carry over; the minimap still works.
+`P` switches between characters and real coloured pixels, the same renderer at about 320 x 180 with square cells and solid
+fill. `src/pixel.js` paints it the way a 256-colour DOS game would: walls are textured by building material (brick with
+mortar, sandstone blocks, concrete panels, slate tiles, stucco, planks), windows get frames, mullions and a glint, the
+ground gets asphalt grain, paving joints, pavers and grass, and the whole picture is quantised to a 6x6x6 colour cube with
+ordered dithering (`V` turns the dithering off for plain colour). Textures fade out with distance so they never shimmer.
+Day, night and dusk carry over from the palette; the minimap and HUD still work. Terminal: half blocks, two pixels per row.
+Birds and animals are small pixel sprites. API: `pixelRgba(frame, pal, out, {dither})`, `halfBlockRows`.
 
 ## Animals and startled birds
 

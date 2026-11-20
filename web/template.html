@@ -46,7 +46,7 @@ pre { margin: 0; font-family: var(--mono); }
   <pre id="menu" hidden></pre>
   <div id="focus">Click to walk. W/S move, A/D strafe, arrows turn and look.</div>
 </div>
-<div id="hud"><pre id="hudL"></pre><pre id="help">W/S move  A/D strafe  arrows turn/look  Shift run  L buildings  , . time  N night/day  C color  P pixels  M map  F filler  [ ] detail</pre></div>
+<div id="hud"><pre id="hudL"></pre><pre id="help">W/S move  A/D strafe  arrows turn/look  Shift run  L buildings  , . time  N night/day  C color  P pixels  V vga dither  M map  F filler  [ ] detail</pre></div>
 <pre id="probe">MMMMMMMMMM</pre>
 
 <script>
@@ -73,7 +73,7 @@ pre { margin: 0; font-family: var(--mono); }
   var mapEl = document.getElementById('map'), mctx = mapEl.getContext('2d');
   var mbg = document.createElement('canvas'), mbgx = mbg.getContext('2d');
   var pixEl = document.getElementById('pix'), pctx = pixEl.getContext('2d');
-  var pixOn = false, pframe = null, pimg = null, PIXW = 320; // P: draw real coloured pixels instead of characters
+  var ditherOn = true, pixOn = false, pframe = null, pimg = null, PIXW = 320; // P: draw real coloured pixels instead of characters
   var ex = C.createExplorer(world);
   C.exploreJump(ex, cam);
   var mapMode = 1; // M cycles: 0 off, 1 local (centred on you), 2 the whole world
@@ -128,6 +128,7 @@ pre { margin: 0; font-family: var(--mono); }
     if (e.key === ',') time = (time + 23.5) % 24;
     if (e.key === '.') time = (time + 0.5) % 24;
     if (e.key.toLowerCase() === 'm') { mapMode = (mapMode + 1) % 3; mapEl.hidden = mapMode === 0; }
+    if (e.key.toLowerCase() === 'v') ditherOn = !ditherOn;
     if (e.key.toLowerCase() === 'p') { pixOn = !pixOn; pixEl.hidden = !pixOn; screen.style.visibility = pixOn ? 'hidden' : 'visible'; }
     if (e.key.toLowerCase() === 'c') { colorOn = !colorOn; screen.classList.toggle('color', colorOn); }
     if (e.key.toLowerCase() === 'f') filler = filler === 'sparse' ? 'solid' : 'sparse';
@@ -155,7 +156,7 @@ pre { margin: 0; font-family: var(--mono); }
     if (pk !== palKey) { palKey = pk; pal = C.makePalette(time); }
     if (pixOn) { // square pixels, solid fill: the same renderer, no glyphs
       C.render(pframe, world, cam, { time: time, cellAspect: 1, filler: 'solid', clock: now / 1000 });
-      C.pixelRgba(pframe, pal, pimg.data);
+      C.pixelRgba(pframe, pal, pimg.data, { dither: ditherOn });
       pctx.putImageData(pimg, 0, 0);
     } else {
       C.render(frame, world, cam, { time: time, cellAspect: cellAspect, filler: filler, clock: now / 1000 });

@@ -42,8 +42,11 @@ const SKY_BEHIND = 0xffffffff;
 /** Write a sprite cell. Over open sky the cell remembers it, so the colour pass keeps the sky background behind it. */
 function put(frame, i, glyph, toneId, dep) {
   frame.id[i] = (frame.tone[i] <= TONE.STAR || frame.id[i] === SKY_BEHIND) ? SKY_BEHIND : 0;
-  frame.ch[i] = glyph; frame.tone[i] = toneId; frame.z[i] = dep;
+  frame.ch[i] = glyph; frame.tone[i] = toneId; frame.z[i] = dep; frame.mat[i] = 0; frame.br[i] = 0;
 }
+
+/** Surface materials the pixel pass can texture. Walls take their pattern from the building's colour material. */
+const MAT = { NONE: 0, ASPHALT: 1, SIDEWALK: 2, GRASS: 3, PLAZA: 4, WALL: 5, WINDOW: 6 };
 
 function createFrame(cols, rows) {
   return {
@@ -53,6 +56,12 @@ function createFrame(cols, rows) {
     id: new Uint32Array(cols * rows), // wall face id per cell (0 = not a near wall); drives the edge pass
     z: new Float32Array(cols * rows), // distance to whatever each cell shows (sprites test against it)
     depth: new Float32Array(cols), // distance to the first wall per column (hook for sprites)
+    /* pixel mode only: what a cell is made of and where on that surface it is, so the pixel pass can texture it */
+    br: new Uint8Array(cols * rows),      // brightness 0-255 (0 = not recorded: use the glyph)
+    mat: new Uint8Array(cols * rows),     // MAT.* texture id (0 = flat colour)
+    tu: new Float32Array(cols * rows),    // surface coordinates: ground x,y or wall (along, height) in tiles; window cells hold 0-1 pane coordinates
+    tv: new Float32Array(cols * rows),
+    focalX: 0,                            // pixels per tile at distance 1, for texture level of detail
   };
 }
 
@@ -87,13 +96,14 @@ function lighting(time) {
  *   cellAspect = glyph cell height / width (about 2 for typical monospace fonts)
  */
 function render(frame, world, cam, opts = {}) {
-  const { cols, rows, ch, tone, depth, id, z: zbuf } = frame;
+  const { cols, rows, ch, tone, depth, id, z: zbuf, br, mat, tu, tv } = frame;
   const fov = opts.fov || 1.15;
   const viewDist = opts.viewDist || 56;
   const cellAspect = opts.cellAspect || 2;
   const time = opts.time === undefined ? 21 : opts.time;
   const sparse = opts.filler !== 'solid';
   const pixelMode = cellAspect < 1.5; // square cells: drawn as pixels, so sprites are drawn as pixel art, not glyphs
+  frame.focalX = cols / 2 / Math.tan(fov / 2);
   const light = lighting(time);
   const { ambient, night } = light;
   const size = world.size;
@@ -150,14 +160,14 @@ function render(frame, world, cam, opts = {}) {
           const hv = hash2(starBucket, r - horizonRow, seed ^ 0x51ed);
           if ((hv & 0x3ff) < (pixelMode ? 1.6 : 14) * night) { code = (hv & 0x400) ? 42 : 46; tn = TONE.STAR; } // '*' or '.'
         }
-        ch[i] = code; tone[i] = tn; id[i] = 0; zbuf[i] = 1e9;
+        ch[i] = code; tone[i] = tn; id[i] = 0; zbuf[i] = 1e9; mat[i] = 0; br[i] = 0;
       } else {
         const d = rowDist[r];
         let px = cam.x + rdx * d, py = cam.y + rdy * d;
         if (wrap) { px -= size * Math.floor(px / size); py -= size * Math.floor(py / size); } // so textures match from both sides of the seam
         const tx = Math.floor(px), ty = Math.floor(py);
         id[i] = 0; zbuf[i] = d;
-        if (!wrap && (tx < 0 || ty < 0 || tx >= size || ty >= size)) { ch[i] = 32; tone[i] = TONE.VOID; continue; }
+        if (!wrap && (tx < 0 || ty < 0 || tx >= size || ty >= size)) { ch[i] = 32; tone[i] = TONE.VOID; mat[i] = 0; br[i] = 0; continue; }
         const t = ty * size + tx;
         const fx = px - tx, fy = py - ty;
         let b, tn, parkHash = -1;
@@ -219,6 +229,11 @@ function render(frame, world, cam, opts = {}) {
         else if (parkHash >= 0 && d < 24) { const q = parkHash & 7; ch[i] = q === 0 ? 34 : q === 1 ? 44 : q === 2 ? 39 : rampCode(b); } // grass: " , '
         else ch[i] = (sparse && tn === TONE.ROAD) ? sparseCode(b, x, r) : rampCode(b);
         tone[i] = tn;
+        if (pixelMode) {
+          br[i] = Math.max(1, Math.min(255, Math.round(b * 255)));
+          mat[i] = tn === TONE.ROAD ? MAT.ASPHALT : tn === TONE.SIDEWALK ? MAT.SIDEWALK : tn === TONE.PARK ? MAT.GRASS : tn === TONE.PLAZA ? MAT.PLAZA : 0;
+          tu[i] = px; tv[i] = py;
+        }
       }
     }
 
@@ -288,7 +303,7 @@ function render(frame, world, cam, opts = {}) {
           const fz = z / FLOOR_H;
           const fl = Math.floor(fz);
           const vf = fz - fl;
-          let b, tn, sp = 0;
+          let b, tn, sp = 0, winLocal = false;
           if (oob) {
             b = (wallBase * 0.8) * f + haze * (1 - f);
             b *= (wx < 0.12 || wx > 0.88) ? 0.6 : 1;
@@ -299,6 +314,7 @@ function render(frame, world, cam, opts = {}) {
             const shopFloor = (storefront && fl <= 1) || (houseFront && fl < house.floors);
             const isWin = fl >= 0 && inV && inH && !shopFloor;
             if (isWin) {
+              winLocal = true;
               const occupied = hash2(bId, 7, seed) / 4294967296 < 0.9;
               const lit = occupied && hash2(bId * 31 + wi + (side ? 17 : 0), fl, seed) / 4294967296 < night * 0.6 + 0.04;
               if (lit && night > 0.2) {
@@ -328,6 +344,7 @@ function render(frame, world, cam, opts = {}) {
               const g = shopCell(shop.kind, isCenter, u, vf, fl);
               if (g) { sp = g; tn = shopCell.tone; }
               else if (shopCell.glass) { // display window, lit at night
+                winLocal = false;
                 if (night > 0.2) { const fw = Math.pow(f, 0.45); b = (0.55 + 0.4 * night) * fw + haze * (1 - fw); tn = TONE.WINDOW_LIT; }
                 else { b = wallBase * 0.4 * f + haze * (1 - f); tn = TONE.WINDOW_DARK; }
               }
@@ -337,6 +354,7 @@ function render(frame, world, cam, opts = {}) {
             const g = houseCell(house.style, house.i === house.door, house.i === house.garage, uu, vf, fl);
             if (g) { sp = g; tn = houseCell.tone; }
             else if (houseCell.glass) {
+              winLocal = false;
               const lit = hash2(bId * 13 + fl, 5, seed) / 4294967296 < night * 0.7 + 0.03;
               if (night > 0.2 && lit) { const fw = Math.pow(f, 0.45); b = (0.55 + 0.4 * night) * fw + haze * (1 - fw); tn = TONE.WINDOW_LIT; }
               else { b = wallBase * 0.4 * f + haze * (1 - f); tn = TONE.WINDOW_DARK; }
@@ -354,6 +372,15 @@ function render(frame, world, cam, opts = {}) {
           ch[i] = sp || rampCode(b); tone[i] = tn;
           id[i] = (oob || perp > viewDist * 0.7) ? 0 : ((bId << 1) | side) + 1;
           zbuf[i] = perp;
+          if (pixelMode) {
+            br[i] = Math.max(1, Math.min(255, Math.round(b * 255)));
+            let m = 0;
+            if (!oob && sp === 0) {
+              if (tn === TONE.WALL) { m = MAT.WALL; tu[i] = wallPos; tv[i] = z; }
+              else if (winLocal && (tn === TONE.WINDOW_LIT || tn === TONE.WINDOW_DARK) && fineV && fineH) { m = MAT.WINDOW; tu[i] = (wf - 0.2) / 0.6; tv[i] = (vf - 0.22) / 0.56; }
+            }
+            mat[i] = m;
+          }
         }
       }
       if (rs < minY) minY = rs;
@@ -829,4 +856,4 @@ function frameHash(frame) {
   return h >>> 0;
 }
 
-module.exports = { SKY_BEHIND, render, createFrame, frameRows, frameHash, lighting, TONE, RAMP, FLOOR_H };
+module.exports = { MAT, SKY_BEHIND, render, createFrame, frameRows, frameHash, lighting, TONE, RAMP, FLOOR_H };

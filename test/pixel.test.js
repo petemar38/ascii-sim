@@ -9,13 +9,15 @@ const cam = C.createCamera(w);
 test('pixel mode: every cell becomes an opaque pixel, sky on top, no black holes in solid fill', () => {
   const W = 160, H = 90, f = C.createFrame(W, H);
   C.render(f, w, cam, { time: 12, cellAspect: 1, filler: 'solid' });
-  const rgba = C.pixelRgba(f, C.makePalette(12), new Uint8ClampedArray(W * H * 4));
+  const rgba = C.pixelRgba(f, C.makePalette(12), new Uint8ClampedArray(W * H * 4), { dither: false });
   let black = 0;
   for (let i = 0; i < W * H; i++) {
     assert.strictEqual(rgba[i * 4 + 3], 255);
     if (rgba[i * 4] + rgba[i * 4 + 1] + rgba[i * 4 + 2] === 0) black++;
   }
-  assert.ok(rgba[2] > rgba[0], 'the top row is blue sky');
+  let skyOk = 0, skyN = 0;
+  for (let i = 0; i < W * H; i++) if (f.tone[i] === C.TONE.SKY) { skyN++; if (rgba[i * 4 + 2] > rgba[i * 4]) skyOk++; }
+  assert.ok(skyN > 50 && skyOk === skyN, 'open sky is blue');
   assert.ok(black < W * H * 0.01, 'black pixels ' + black);
 });
 

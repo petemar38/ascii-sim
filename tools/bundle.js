@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.join(__dirname, '..');
-const order = ['rng', 'names', 'veg', 'birds', 'animals', 'world', 'facade', 'camera', 'render', 'color', 'hud', 'travel', 'minimap', 'index'];
+const order = ['rng', 'names', 'veg', 'birds', 'animals', 'world', 'facade', 'camera', 'render', 'color', 'pixel', 'hud', 'travel', 'minimap', 'index'];
 
 let bundle =
   'var __defs = {}, __cache = {};\n' +
