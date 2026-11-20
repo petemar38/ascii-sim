@@ -566,7 +566,7 @@ function generateWorld(opts = {}) {
         if (along % 6 === 2 + side) {
           props.push({ x: px, y: py, type: PROP.LAMP, v: 0 });
         } else if (along % 6 === side && districts[district[idx(x, y)]].type >= D.RESIDENTIAL && h01(x, y, 0x33) < 0.6) {
-          { const s2 = h01(x, y, 0x5a8); props.push({ x: x + 0.5, y: y + 0.5, type: PROP.TREE, v: 1, k: s2 < 0.3 ? TREE.MAPLE : s2 < 0.55 ? TREE.PEAR : s2 < 0.72 ? TREE.OAK : s2 < 0.84 ? TREE.CHERRY : s2 < 0.94 ? TREE.POPLAR : TREE.DOGWOOD }); }
+          { const s2 = h01(x, y, 0x5a8); props.push({ x: px, y: py, type: PROP.TREE, v: 1, k: s2 < 0.3 ? TREE.MAPLE : s2 < 0.55 ? TREE.PEAR : s2 < 0.72 ? TREE.OAK : s2 < 0.84 ? TREE.CHERRY : s2 < 0.94 ? TREE.POPLAR : TREE.DOGWOOD }); }
         } else if (side === 0 && along % 12 === 4 && (() => { const dtp = districts[district[idx(x, y)]].type; return dtp !== D.DOWNTOWN && dtp !== D.PARKLAND; })()) {
           const pole = { x: px, y: py, type: PROP.POLE, v: 0, horiz, along };
           props.push(pole);
